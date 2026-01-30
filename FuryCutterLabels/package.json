@@ -1,0 +1,12 @@
+{
+  "name": "furycutterlabels",
+  "version": "1.0.0",
+  "main": "CSInterface.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": ""
+}

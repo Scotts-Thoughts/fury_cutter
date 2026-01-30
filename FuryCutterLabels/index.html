@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Fury Cutter Labels</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: #232323; color: #e0e0e0; padding: 10px; font-size: 11px; }
+        h1 { font-size: 13px; margin-bottom: 10px; color: #61afef; }
+        .section { margin-bottom: 12px; padding: 8px; background: #2a2a2a; border-radius: 4px; }
+        button { background: #3a3a3a; border: 1px solid #555; color: #e0e0e0; padding: 6px 10px; cursor: pointer; border-radius: 3px; font-size: 10px; margin: 2px; }
+        button:hover { background: #4a4a4a; }
+        button.go { background: #2d8a5a; font-size: 13px; padding: 10px 20px; }
+        #status { background: #1a1a1a; border: 1px solid #333; border-radius: 3px; padding: 6px; height: 180px; overflow-y: auto; font-family: Consolas, monospace; font-size: 9px; white-space: pre-wrap; }
+        #current { font-size: 14px; font-weight: bold; color: #e5c07b; margin: 10px 0; }
+        input[type="text"] { background: #1a1a1a; border: 1px solid #555; color: #e0e0e0; padding: 6px; width: 100%; margin: 5px 0; border-radius: 3px; font-size: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Fury Cutter Labels</h1>
+    
+    <div class="section">
+        <button id="btnBrowse">📁 Browse</button>
+        <input type="text" id="jsonPath" placeholder="Or paste JSON path">
+        <button id="btnLoadPath">Load</button>
+        <span id="fileInfo"></span>
+    </div>
+    
+    <div id="current">Ready</div>
+    
+    <div class="section">
+        <button class="go" id="btnApply">▶ APPLY ALL</button>
+        <button id="btnStop">Stop</button>
+        <button id="btnReset">Reset</button>
+    </div>
+    
+    <div class="section">
+        <b>Diagnostics:</b><br>
+        <button onclick="run('getQEInfo()',log)">QE Info</button>
+        <button onclick="run('listAppMethods()',log)">App Methods</button>
+        <button onclick="run('findLabelCommands()',log)">Find Commands</button>
+        <br>
+        <button onclick="run('executeLabelCommand(0)',log)">Test Label 0</button>
+        <button onclick="run('executeLabelCommand(12)',log)">Test Label 12</button>
+        <button onclick="run('executeLabelCommand(13)',log)">Test Label 13</button>
+    </div>
+    
+    <div id="status">Click diagnostics to discover available commands</div>
+
+    <script src="CSInterface.js"></script>
+    <script>
+        var cs = new CSInterface();
+        var data = null;
+        var idx = 0;
+        var running = false;
+        
+        var LABEL_KEYS = {
+            "Gym": 13, "Rival": 12, "E4": 15, "Champion": 10,
+            "Postgame": 5, "Enemy Leader": 0, "Cerulean": 4, "Enemy Boss": 7
+        };
+        
+        function log(m) {
+            document.getElementById('status').textContent = m + '\n' + document.getElementById('status').textContent;
+        }
+        
+        function setStatus(m) {
+            document.getElementById('current').textContent = m;
+        }
+        
+        function run(script, cb) { 
+            cs.evalScript(script, cb || function(){}); 
+        }
+        
+        function loadJSON(content) {
+            try {
+                data = JSON.parse(content);
+                idx = 0;
+                document.getElementById('fileInfo').textContent = '✓ ' + data.labels.length;
+                setStatus('Ready - ' + data.labels.length + ' battles');
+                log('Loaded ' + data.labels.length + ' battles');
+            } catch(e) {
+                log('JSON error: ' + e);
+            }
+        }
+        
+        document.getElementById('btnBrowse').addEventListener('click', function() {
+            try {
+                var r = window.cep.fs.showOpenDialogEx(false, false, 'Select JSON', '', ['json']);
+                if (r && r.data && r.data.length > 0) {
+                    document.getElementById('jsonPath').value = r.data[0];
+                    var f = window.cep.fs.readFile(r.data[0]);
+                    if (f.err === 0) loadJSON(f.data);
+                }
+            } catch(e) {
+                log('Error: ' + e);
+            }
+        });
+        
+        document.getElementById('btnLoadPath').addEventListener('click', function() {
+            var path = document.getElementById('jsonPath').value.trim();
+            if (!path) return;
+            try {
+                var f = window.cep.fs.readFile(path);
+                if (f.err === 0) loadJSON(f.data);
+                else log('Read err: ' + f.err);
+            } catch(e) {
+                log('Error: ' + e);
+            }
+        });
+        
+        document.getElementById('btnApply').addEventListener('click', function() {
+            if (!data) { log('Load JSON first'); return; }
+            if (running) return;
+            running = true;
+            idx = 0;
+            var total = data.labels.length;
+            
+            function next() {
+                if (!running || idx >= total) {
+                    running = false;
+                    setStatus('Done! ' + idx + ' applied');
+                    log('Complete!');
+                    return;
+                }
+                var e = data.labels[idx];
+                var labelIdx = LABEL_KEYS[e.label] || 4;
+                setStatus((idx+1) + '/' + total + ': ' + e.trainer);
+                
+                run('processBattle(' + e.start_seconds + ',"' + e.label + '",' + labelIdx + ')', function(r) {
+                    log((idx+1) + '. ' + e.trainer + ': ' + r);
+                    idx++;
+                    setTimeout(next, 300);
+                });
+            }
+            log('Starting...');
+            next();
+        });
+        
+        document.getElementById('btnStop').addEventListener('click', function() {
+            running = false;
+            log('Stopped');
+        });
+        
+        document.getElementById('btnReset').addEventListener('click', function() {
+            running = false;
+            idx = 0;
+            setStatus('Ready');
+        });
+        
+        log('Extension loaded');
+    </script>
+</body>
+</html>

@@ -1,0 +1,65 @@
+# Video files
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.wmv
+*.flv
+*.webm
+videos/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+venv/
+.venv/
+ENV/
+
+# Debug images (auto-generated)
+debug_*.jpg
+debug_*.png
+clahe_debug_*.jpg
+compare_*.jpg
+gray_debug_*.jpg
+normalized_debug_*.jpg
+otsu_compare_*.jpg
+robust_*.jpg
+tight_*.jpg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Adobe Extension builds
+*.zxp
+FuryCutterLabels/node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+*.log
+
