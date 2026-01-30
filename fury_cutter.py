@@ -530,14 +530,15 @@ class VideoProcessor:
             ocr_pattern = self.game_config.ocr_pattern
             
             if ocr_pattern == "leader":
-                # Gen4: Use percentile-based preprocessing for colored backgrounds
+                # Gen3/Gen4: Use percentile-based preprocessing for colored backgrounds
                 gray = cv2.cvtColor(ocr_crop, cv2.COLOR_BGR2GRAY)
                 threshold_value = np.percentile(gray, 20)  # Darkest 20% = text
                 _, binary = cv2.threshold(gray, threshold_value, 255, cv2.THRESH_BINARY_INV)
                 processed = 255 - binary
                 pil_processed = Image.fromarray(processed)
-                # Use --psm 6 (block of text) - faster than --psm 7 with same accuracy
-                text = pytesseract.image_to_string(pil_processed, config='--psm 6')
+                # Use --psm 7 (single text line) - works better for single-line headers
+                # PSM 6 fails on some images (e.g., rival, brock) where PSM 7 succeeds
+                text = pytesseract.image_to_string(pil_processed, config='--psm 7')
             else:
                 # Gen5: Raw OCR works well on the cleaner layout
                 text = pytesseract.image_to_string(pil_image, config='--psm 6')
@@ -576,14 +577,15 @@ class VideoProcessor:
             ocr_pattern = self.game_config.ocr_pattern
             
             if ocr_pattern == "leader":
-                # Gen4: Use percentile-based preprocessing for colored backgrounds
+                # Gen3/Gen4: Use percentile-based preprocessing for colored backgrounds
                 gray = cv2.cvtColor(ocr_crop, cv2.COLOR_BGR2GRAY)
                 threshold_value = np.percentile(gray, 20)  # Darkest 20% = text
                 _, binary = cv2.threshold(gray, threshold_value, 255, cv2.THRESH_BINARY_INV)
                 processed = 255 - binary
                 pil_processed = Image.fromarray(processed)
-                # Use --psm 6 (block of text) - faster than --psm 7 with same accuracy
-                text = pytesseract.image_to_string(pil_processed, config='--psm 6')
+                # Use --psm 7 (single text line) - works better for single-line headers
+                # PSM 6 fails on some images (e.g., rival, brock) where PSM 7 succeeds
+                text = pytesseract.image_to_string(pil_processed, config='--psm 7')
             else:
                 # Gen5: Raw OCR works well on the cleaner layout
                 text = pytesseract.image_to_string(pil_image, config='--psm 6')
