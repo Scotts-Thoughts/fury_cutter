@@ -77,6 +77,10 @@ PREMIERE_LABELS = {
     
     # Story trainers (Bianca, Cheren, N, Wally) -> "Cerulean" label (key 7)
     "bianca": "Cerulean", "cheren": "Cerulean", "n": "Enemy Boss", "wally": "Cerulean",
+    
+    # Special trainers
+    "kimono girl": "Cerulean",  # Kimono Girls in HGSS
+    "lance": "Champion",  # Lance as Champion in HGSS
 }
 
 
@@ -159,13 +163,14 @@ GAME_CONFIGS = {
         name="Pokemon HeartGold",
         generation=Generation.GEN4,
         platform=Platform.NINTENDO_DS,
-        ocr_pattern="leader",  # "Leader [name]" or "Rival #"
+        ocr_pattern="leader",  # "Leader [name]" or "Rival #" or "Elite Four [name]"
         ocr_region=Region(x=1490, y=20, width=400, height=35),
         trainers=[
             "rival", "falkner", "bugsy", "whitney", "morty", "chuck",
             "jasmine", "pryce", "clair", "will", "koga", "bruno",
             "karen", "lance", "brock", "misty", "lt. surge", "erika",
-            "sabrina", "blaine", "janine", "blue", "red"
+            "sabrina", "blaine", "janine", "blue", "red", "silver",
+            "kimono girl"
         ]
     ),
     
@@ -292,18 +297,42 @@ class VideoProcessor:
     
     BLACK_MEAN_THRESHOLD = 5   # Stricter - true black frames have mean ~0
     WHITE_MEAN_THRESHOLD = 250  # Stricter - true white frames have mean ~255
-    TRAINER_SAMPLE_INTERVAL = 1440  # Check for trainer every N frames (6 sec at 240fps)
+    TRAINER_SAMPLE_INTERVAL = 960  # Check for trainer every N frames (6 sec at 240fps)
+    
+    # Performance tuning for transition search
+    # Larger jumps = fewer OCR calls, but wider search window for black/white detection
+    TRANSITION_JUMP = 240  # 3 seconds at 240fps (was 240 = 1 sec)
+    
+    # Adaptive sampling for early-game short battles
+    EARLY_GAME_INTERVAL = 240   # Check every 2 seconds for first 10 minutes
+    EARLY_GAME_THRESHOLD = 43200  # First 10 min at 240fps
     
     def __init__(self, video_path: Path, game_config: GameConfig,
                  downscale_factor: float = 0.25,
                  num_workers: int = None,
-                 debug_ocr: bool = False):
+                 debug_ocr: bool = False,
+                 transition_jump: int = None,
+                 early_interval: int = None,
+                 normal_interval: int = None):
         self.video_path = video_path
         self.game_config = game_config
         self.platform = game_config.platform
         self.downscale_factor = downscale_factor
         self.num_workers = num_workers or max(1, os.cpu_count() - 1)
         self.debug_ocr = debug_ocr
+        
+        # Override class defaults if custom values provided
+        if transition_jump is not None:
+            self.TRANSITION_JUMP = transition_jump
+        if early_interval is not None:
+            self.EARLY_GAME_INTERVAL = early_interval
+        if normal_interval is not None:
+            self.TRAINER_SAMPLE_INTERVAL = normal_interval
+        
+        # OCR cache to avoid duplicate calls on the same frame
+        # Key: frame_num, Value: OCR text result
+        self._ocr_cache: dict[int, str] = {}
+        self._ocr_cache_lock = Lock()
         
         # Build config dict for backwards compatibility
         self.config = {
@@ -405,7 +434,10 @@ class VideoProcessor:
         ocr_pattern = self.game_config.ocr_pattern
         
         if ocr_pattern == "team":
-            return f"{trainer_lower}'s team" in text or f"{trainer_lower}s team" in text
+            # Use word boundary to avoid matching "rolan's team" or "warren's team" as "n's team"
+            # \b ensures the trainer name starts at a word boundary (not preceded by a letter)
+            pattern = rf"\b{re.escape(trainer_lower)}['']?s\s+team"
+            return bool(re.search(pattern, text))
         elif ocr_pattern == "leader":
             if trainer_lower == "rival":
                 # Match various OCR misreadings of "Rival #"
@@ -434,6 +466,63 @@ class VideoProcessor:
             elif trainer_lower == "lt. surge" or trainer_lower == "surge":
                 # Handle Lt. Surge variations
                 return "surge" in text
+            elif trainer_lower == "silver":
+                # Clean text first
+                cleaned_text = text.strip('"\'`.,;:!?').strip('"\'')
+                # Rival Silver - match "rival silver" or just "silver" in context
+                if "rival" in cleaned_text and "silver" in cleaned_text:
+                    return True
+                # Also match just "silver" as standalone word (but not "silver" in other contexts)
+                if re.search(r'\bsilver\b', cleaned_text):
+                    return True
+                return False
+            elif trainer_lower == "kimono girl":
+                # Clean text first
+                cleaned_text = text.strip('"\'`.,;:!?').strip('"\'')
+                # Kimono Girl - match any text containing "kimono girl" regardless of name that follows
+                # Pattern: "kimono girl" followed by optional name (e.g., "kimono girl sayo")
+                if re.search(r'\bkimono\s+girl\b', cleaned_text, re.IGNORECASE):
+                    return True
+                return False
+            elif trainer_lower == "misty":
+                # Clean text first
+                cleaned_text = text.strip('"\'`.,;:!?').strip('"\'')
+                # Handle OCR errors: "misty" sometimes reads as "mistu", "misty", etc.
+                misty_patterns = [r'leader\s*misty', r'leader\s*mistu', r'leader\s*mist[yui]', r'\bmisty\b', r'\bmistu\b']
+                for pattern in misty_patterns:
+                    if re.search(pattern, cleaned_text, re.IGNORECASE):
+                        return True
+                return False
+            elif trainer_lower == "janine":
+                # Clean text first
+                cleaned_text = text.strip('"\'`.,;:!?').strip('"\'')
+                # Handle OCR errors: "leader" sometimes reads as "deader", "1eader", etc.
+                janine_patterns = [
+                    r'leader\s*janine',
+                    r'[ld]eader\s*janine',  # "deader" OCR error
+                    r'[il1]eader\s*janine',  # "1eader" OCR error
+                    r'\bjanine\b'
+                ]
+                for pattern in janine_patterns:
+                    if re.search(pattern, cleaned_text, re.IGNORECASE):
+                        return True
+                return False
+            elif trainer_lower == "bruno":
+                # Clean text first
+                cleaned_text = text.strip('"\'`.,;:!?').strip('"\'')
+                # Handle OCR errors for Elite Four Bruno:
+                # "elite" -> "lite", "slite", "elite"
+                # "four" -> "four"
+                # "bruno" -> "bruno", "brunco", "brunc0", "bruanco", "brun0"
+                bruno_patterns = [
+                    r'(?:elite|[s\']?lite)\s*four\s*bru[an]?[cn][co0]?o?',  # "elite four bruno", "lite four brunco", "lite four bruanco"
+                    r'elite\s+bru[an]?[cn][co0]?o?',  # "elite bruno"
+                    r'\bbru[an]?[cn][co0]?o?\b',  # just "bruno", "brunco", "bruanco"
+                ]
+                for pattern in bruno_patterns:
+                    if re.search(pattern, cleaned_text, re.IGNORECASE):
+                        return True
+                return False
             elif trainer_lower == "champion":
                 # Champion battle (Gen3 FRLG)
                 return "champion" in text
@@ -452,17 +541,47 @@ class VideoProcessor:
                         return True
                 return False
             else:
+                # Clean text to handle OCR artifacts (quotes, missing letters)
+                # Remove replacement characters and other Unicode artifacts
+                # \ufffd is the replacement character, \u200b is zero-width space
+                # Also remove other common OCR artifacts like \u00a0 (non-breaking space)
+                cleaned_text = text.replace('\ufffd', '').replace('\u200b', '').replace('\u00a0', ' ')
+                # Remove leading/trailing quotes and punctuation
+                cleaned_text = cleaned_text.strip('"\'`.,;:!?').strip('"\'')
+                
                 # Check for "Leader [name]", "Champion [name]", "Elite Four [name]", or just the name
-                if f"leader {trainer_lower}" in text:
+                # Handle "Leader [name]" - OCR sometimes runs words together (e.g., "leadermisty")
+                leader_pattern = rf'leader\s*{re.escape(trainer_lower)}'
+                if re.search(leader_pattern, cleaned_text, re.IGNORECASE):
                     return True
-                if f"champion {trainer_lower}" in text:
+                if f"leader {trainer_lower}" in cleaned_text:
                     return True
-                if f"elite four {trainer_lower}" in text:
+                # Handle "Champion [name]" - OCR sometimes runs words together (e.g., "championlance")
+                champion_pattern = rf'champion\s*{re.escape(trainer_lower)}'
+                if re.search(champion_pattern, cleaned_text, re.IGNORECASE):
                     return True
-                if f"elite {trainer_lower}" in text:  # OCR might miss "four"
+                if f"champion {trainer_lower}" in cleaned_text:
                     return True
-                # Just the trainer name in the text
-                if trainer_lower in text:
+                # Handle "Elite Four [name]" with OCR error tolerance
+                # OCR sometimes reads "Elite Four" as "lite four" (missing E) or adds quotes
+                # Also handle cases where OCR runs "Four" and name together (e.g., "fourbruno")
+                elite_four_pattern = rf"(?:elite|['\"]?lite)\s+four\s*{re.escape(trainer_lower)}"
+                if re.search(elite_four_pattern, cleaned_text, re.IGNORECASE):
+                    return True
+                # Also check for "elite [name]" (OCR might miss "four")
+                if f"elite {trainer_lower}" in cleaned_text:
+                    return True
+                # Filter out false positives: exclude "gentleman alfred" and similar
+                # If text contains "gentleman", only match if trainer is explicitly "gentleman"
+                if "gentleman" in cleaned_text and trainer_lower != "gentleman":
+                    return False
+                # Also filter out common false positives like "alfred" in "gentleman alfred"
+                # Check if trainer name appears but is preceded by "gentleman"
+                if re.search(rf'gentleman\s+{re.escape(trainer_lower)}\b', cleaned_text):
+                    return False
+                # Just the trainer name in the text (but not as part of another word)
+                # Use word boundary to avoid partial matches (e.g., "fred" in "alfred")
+                if re.search(rf'\b{re.escape(trainer_lower)}\b', cleaned_text):
                     return True
                 return False
         else:
@@ -501,9 +620,16 @@ class VideoProcessor:
         """
         Get OCR text at a specific frame. Returns empty string if no text found.
         This is separated from trainer checking so we only run OCR ONCE per frame.
+        
+        OPTIMIZED: Results are cached to avoid duplicate OCR calls on the same frame.
         """
         if not OCR_AVAILABLE:
             return ""
+        
+        # Check cache first (thread-safe)
+        with self._ocr_cache_lock:
+            if frame_num in self._ocr_cache:
+                return self._ocr_cache[frame_num]
         
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
         ret, frame = cap.read()
@@ -519,6 +645,9 @@ class VideoProcessor:
         
         # OPTIMIZATION: Fast pre-screen to skip OCR on non-battle frames (~0.2ms vs ~70ms)
         if not self._has_text_like_content(ocr_crop):
+            # Cache the empty result too
+            with self._ocr_cache_lock:
+                self._ocr_cache[frame_num] = ""
             return ""
         
         # Convert BGR to RGB for PIL
@@ -543,7 +672,22 @@ class VideoProcessor:
                 # Gen5: Raw OCR works well on the cleaner layout
                 text = pytesseract.image_to_string(pil_image, config='--psm 6')
             
-            return ' '.join(text.split()).lower()
+            # Clean text: remove quotes, normalize whitespace, handle OCR errors
+            result = ' '.join(text.split()).lower()
+            # Remove replacement characters and other Unicode artifacts that OCR sometimes produces
+            # \ufffd is the replacement character, \u200b is zero-width space
+            # Also remove other common OCR artifacts like \u00a0 (non-breaking space)
+            result = result.replace('\ufffd', '').replace('\u200b', '').replace('\u00a0', ' ')
+            # Remove common OCR artifacts: quotes, extra punctuation at start/end
+            result = result.strip('"\'`.,;:!?')
+            # Remove leading/trailing quotes that OCR sometimes adds
+            result = result.strip('"\'')
+            
+            # Cache the result
+            with self._ocr_cache_lock:
+                self._ocr_cache[frame_num] = result
+            
+            return result
         except Exception:
             return ""
     
@@ -590,7 +734,16 @@ class VideoProcessor:
                 # Gen5: Raw OCR works well on the cleaner layout
                 text = pytesseract.image_to_string(pil_image, config='--psm 6')
             
+            # Clean text: remove quotes, normalize whitespace, handle OCR errors
             text_clean = ' '.join(text.split()).lower()
+            # Remove replacement characters and other Unicode artifacts that OCR sometimes produces
+            # \ufffd is the replacement character, \u200b is zero-width space
+            # Also remove other common OCR artifacts like \u00a0 (non-breaking space)
+            text_clean = text_clean.replace('\ufffd', '').replace('\u200b', '').replace('\u00a0', ' ')
+            # Remove common OCR artifacts: quotes, extra punctuation at start/end
+            text_clean = text_clean.strip('"\'`.,;:!?')
+            # Remove leading/trailing quotes that OCR sometimes adds
+            text_clean = text_clean.strip('"\'')
             
             # Debug output
             if self.debug_ocr and text_clean.strip():
@@ -638,6 +791,52 @@ class VideoProcessor:
                     # Handle Lt. Surge variations
                     if "surge" in text_clean:
                         return True, text_clean
+                elif trainer_lower == "silver":
+                    # Rival Silver - match "rival silver" or just "silver" in context
+                    if "rival" in text_clean and "silver" in text_clean:
+                        return True, text_clean
+                    # Also match just "silver" as standalone word
+                    if re.search(r'\bsilver\b', text_clean):
+                        return True, text_clean
+                    return False, text_clean
+                elif trainer_lower == "kimono girl":
+                    # Kimono Girl - match any text containing "kimono girl" regardless of name that follows
+                    # Pattern: "kimono girl" followed by optional name (e.g., "kimono girl sayo")
+                    if re.search(r'\bkimono\s+girl\b', text_clean, re.IGNORECASE):
+                        return True, text_clean
+                    return False, text_clean
+                elif trainer_lower == "misty":
+                    # Handle OCR errors: "misty" sometimes reads as "mistu", etc.
+                    misty_patterns = [r'leader\s*misty', r'leader\s*mistu', r'leader\s*mist[yui]', r'\bmisty\b', r'\bmistu\b']
+                    for pattern in misty_patterns:
+                        if re.search(pattern, text_clean, re.IGNORECASE):
+                            return True, text_clean
+                    return False, text_clean
+                elif trainer_lower == "janine":
+                    # Handle OCR errors: "leader" sometimes reads as "deader", "1eader", etc.
+                    janine_patterns = [
+                        r'leader\s*janine',
+                        r'[ld]eader\s*janine',  # "deader" OCR error
+                        r'[il1]eader\s*janine',  # "1eader" OCR error
+                        r'\bjanine\b'
+                    ]
+                    for pattern in janine_patterns:
+                        if re.search(pattern, text_clean, re.IGNORECASE):
+                            return True, text_clean
+                    return False, text_clean
+                elif trainer_lower == "bruno":
+                    # Handle OCR errors for Elite Four Bruno:
+                    # "elite" -> "lite", "slite", "elite"
+                    # "bruno" -> "bruno", "brunco", "brunc0", "bruanco", "brun0"
+                    bruno_patterns = [
+                        r'(?:elite|[s\']?lite)\s*four\s*bru[an]?[cn][co0]?o?',  # "elite four bruno", "lite four brunco", "lite four bruanco"
+                        r'elite\s+bru[an]?[cn][co0]?o?',  # "elite bruno"
+                        r'\bbru[an]?[cn][co0]?o?\b',  # just "bruno", "brunco", "bruanco"
+                    ]
+                    for pattern in bruno_patterns:
+                        if re.search(pattern, text_clean, re.IGNORECASE):
+                            return True, text_clean
+                    return False, text_clean
                 elif trainer_lower == "champion":
                     # Champion battle (Gen3 FRLG)
                     if "champion" in text_clean:
@@ -656,19 +855,37 @@ class VideoProcessor:
                             return True, text_clean
                 else:
                     # Check for "Leader [name]" pattern (gym leaders)
-                    leader_pattern = f"leader {trainer_lower}"
-                    if leader_pattern in text_clean:
+                    # Handle cases where OCR runs words together (e.g., "leadermisty")
+                    leader_pattern = rf'leader\s*{re.escape(trainer_lower)}'
+                    if re.search(leader_pattern, text_clean, re.IGNORECASE):
+                        return True, text_clean
+                    if f"leader {trainer_lower}" in text_clean:
                         return True, text_clean
                     
-                    # Check for "Champion [name]" pattern (Cynthia, Steven, etc.)
+                    # Check for "Champion [name]" pattern (Cynthia, Steven, Lance, etc.)
+                    # Handle cases where OCR runs words together (e.g., "championlance")
+                    champion_pattern = rf'champion\s*{re.escape(trainer_lower)}'
+                    if re.search(champion_pattern, text_clean, re.IGNORECASE):
+                        return True, text_clean
                     if f"champion {trainer_lower}" in text_clean:
                         return True, text_clean
                     
-                    # Check for "Elite Four [name]" pattern
-                    if f"elite four {trainer_lower}" in text_clean:
+                    # Check for "Elite Four [name]" pattern with OCR error tolerance
+                    # OCR sometimes reads "Elite Four" as "lite four" (missing E) or adds quotes
+                    # Also handle cases where OCR runs "Four" and name together (e.g., "fourbruno")
+                    elite_four_pattern = rf"(?:elite|['\"]?lite)\s+four\s*{re.escape(trainer_lower)}"
+                    if re.search(elite_four_pattern, text_clean, re.IGNORECASE):
                         return True, text_clean
                     if f"elite {trainer_lower}" in text_clean:  # OCR might miss "four"
                         return True, text_clean
+                    
+                    # Filter out false positives: exclude "gentleman alfred" and similar
+                    # If text contains "gentleman", only match if trainer is explicitly "gentleman"
+                    if "gentleman" in text_clean and trainer_lower != "gentleman":
+                        return False, text_clean
+                    # Also filter out common false positives like "alfred" in "gentleman alfred"
+                    if re.search(rf'gentleman\s+{re.escape(trainer_lower)}\b', text_clean):
+                        return False, text_clean
                     
                     # Check for just the trainer name at start of text (header position)
                     # This handles Elite Four, Champion, Team Galactic, etc.
@@ -777,16 +994,101 @@ class VideoProcessor:
         result = self._binary_search_transition(cap, search_start, approx_frame, find_start=True)
         return result if result else approx_frame
     
+    def _refine_to_sequence_end(self, cap, approx_frame: int) -> int:
+        """
+        Given a frame that's black/white, find the exact END of the sequence.
+        Uses binary search for speed.
+        """
+        # Search forwards up to 2 seconds (480 frames at 240fps) to find where black ends
+        search_end = min(self.total_frames - 1, approx_frame + 480)
+        result = self._binary_search_transition(cap, approx_frame, search_end, find_start=False)
+        return result if result else approx_frame
+    
+    def _find_sequence_center(self, cap, approx_frame: int) -> int:
+        """
+        Given a frame that's black/white, find the CENTER of the sequence.
+        First finds the start and end, then returns the midpoint.
+        """
+        start = self._refine_to_sequence_start(cap, approx_frame)
+        end = self._refine_to_sequence_end(cap, approx_frame)
+        return (start + end) // 2
+    
+    def _binary_search_text_boundary(self, cap, start_frame: int, end_frame: int, 
+                                      trainer_name: str, find_first: bool = True) -> int:
+        """
+        Use binary search to find the boundary where trainer text appears/disappears.
+        Much faster than linear search - reduces O(n) OCR calls to O(log n).
+        
+        Args:
+            start_frame: Frame where text is NOT detected (or IS detected if find_first=False)
+            end_frame: Frame where text IS detected (or NOT detected if find_first=False)
+            trainer_name: The trainer to search for
+            find_first: If True, find first frame with text. If False, find last frame with text.
+            
+        Returns:
+            The approximate frame number of the boundary
+        """
+        left, right = start_frame, end_frame
+        
+        # Ensure left < right
+        if left > right:
+            left, right = right, left
+        
+        # Binary search - stop when window is small enough
+        # We don't need exact precision since we'll search for black/white in a window anyway
+        MIN_WINDOW = int(self.fps * 0.5)  # Stop at 0.5 second precision
+        
+        while right - left > MIN_WINDOW:
+            mid = (left + right) // 2
+            detected = self._text_contains_trainer_pattern(
+                self._get_ocr_text_at_frame(cap, mid), trainer_name
+            )
+            
+            if find_first:
+                # Looking for first frame WITH text
+                if detected:
+                    right = mid  # Text found, boundary is earlier
+                else:
+                    left = mid  # Text not found, boundary is later
+            else:
+                # Looking for last frame WITH text
+                if detected:
+                    left = mid  # Text found, boundary is later
+                else:
+                    right = mid  # Text not found, boundary is earlier
+        
+        return (left + right) // 2
+    
     def _find_transition_before_fast(self, cap, start_frame: int, trainer_name: str) -> Optional[int]:
         """
         Fast search for transition BEFORE battle (cut-in point).
         Uses OCR to narrow down where to search, then finds black/white frames.
         The black/white frame should be between where text disappears and where it appears.
+        
+        ALGORITHM:
+        1. Start at the frame where trainer was detected (start_frame)
+        2. Jump BACKWARDS by TRANSITION_JUMP frames (default 720 = 3 sec at 240fps)
+        3. Check if trainer text is still present at each jump
+        4. When text disappears, use binary search to find exact boundary
+        5. Search for black/white frame around the boundary (backwards from boundary)
+        
+        OPTIMIZED: Uses larger jumps (3 sec instead of 1 sec) to reduce OCR calls by 3x.
+        Then uses binary search to narrow down the exact window.
+        
+        IMPORTANT: Searches BACKWARDS from the battle to find the closest transition.
+        This ensures we find the black frame right before the battle, not an earlier
+        white frame (e.g., Gen 5 has white->graphic->black->battle sequence).
+        
+        POTENTIAL ISSUE: If TRANSITION_JUMP is too large (e.g., 720 frames = 3 sec),
+        we might jump over short battles entirely. However, this function searches backwards
+        from a known detection point, so it should still find the transition before the battle.
         """
-        JUMP = 240  # 1 second at 240fps
+        JUMP = self.TRANSITION_JUMP  # 3 seconds at 240fps (configurable)
         
         # Jump backwards until trainer text disappears
         frame = start_frame
+        last_with_text = start_frame
+        
         while frame > 0:
             frame -= JUMP
             if frame < 0:
@@ -794,21 +1096,30 @@ class VideoProcessor:
             detected = self._text_contains_trainer_pattern(
                 self._get_ocr_text_at_frame(cap, frame), trainer_name
             )
-            if not detected:
-                # Text disappeared - the transition is between here and start_frame
-                # Search this window for black/white frame (coarse, then refine)
-                search_start = frame
-                search_end = start_frame
+            if detected:
+                last_with_text = frame  # Still in battle
+            else:
+                # Text disappeared - transition is between 'frame' and 'last_with_text'
+                # Use binary search to narrow down the exact boundary (reduces OCR calls)
+                boundary = self._binary_search_text_boundary(
+                    cap, frame, last_with_text, trainer_name, find_first=True
+                )
                 
-                # Coarse search (every 10 frames)
-                approx = self._find_black_white_in_range(cap, search_start, search_end, step=10)
+                # Search around the boundary for black/white frame
+                # Search BACKWARDS from boundary to find the closest transition to the battle
+                # This is important for Gen 5 where white->graphic->black->battle sequence
+                # means we want the black frame (closest), not the white frame (earliest)
+                search_start = max(0, boundary - JUMP)
+                
+                # Coarse search BACKWARDS (from boundary toward earlier frames)
+                approx = self._find_black_white_in_range(cap, boundary, search_start, step=10)
                 if approx:
-                    return self._refine_to_sequence_start(cap, approx)
+                    return self._find_sequence_center(cap, approx)
                 
                 # If not found, try smaller steps
-                approx = self._find_black_white_in_range(cap, search_start, search_end, step=1)
+                approx = self._find_black_white_in_range(cap, boundary, search_start, step=1)
                 if approx:
-                    return self._refine_to_sequence_start(cap, approx)
+                    return self._find_sequence_center(cap, approx)
                 
                 break
         
@@ -819,8 +1130,25 @@ class VideoProcessor:
         Fast search for transition AFTER battle (cut-out point).
         Uses OCR to narrow down where to search - the black/white frame should be
         shortly after the trainer text disappears.
+        
+        ALGORITHM:
+        1. Start at the frame where trainer was detected (start_frame)
+        2. Jump FORWARDS by TRANSITION_JUMP frames (default 720 = 3 sec at 240fps)
+        3. Check if trainer text is still present at each jump
+        4. When text disappears, use binary search to find exact boundary
+        5. Search for black/white frame around the boundary (forwards from boundary)
+        
+        OPTIMIZED: Uses larger jumps (3 sec instead of 1 sec) to reduce OCR calls by 3x.
+        Then uses binary search to narrow down the exact window.
+        
+        POTENTIAL ISSUE: If TRANSITION_JUMP is too large and the battle is very short
+        (shorter than TRANSITION_JUMP), we might jump past the battle end in one step.
+        However, the binary search should still find the boundary between last_with_text
+        and the frame where text disappeared. The real issue is if the black/white frame
+        search window is too narrow - we extend the search up to JUMP * 2 frames forward
+        to handle this case.
         """
-        JUMP = 240  # 1 second at 240fps
+        JUMP = self.TRANSITION_JUMP  # 3 seconds at 240fps (configurable)
         
         # Jump forwards until trainer text disappears
         frame = start_frame
@@ -837,21 +1165,26 @@ class VideoProcessor:
             if detected:
                 last_with_text = frame
             else:
-                # Text disappeared - search from last_with_text onwards for black/white
-                # The black frame might be a bit before OR after where text disappeared
-                search_start = max(0, last_with_text - JUMP)
-                search_end = min(self.total_frames - 1, frame + JUMP * 2)
+                # Text disappeared - transition is between 'last_with_text' and 'frame'
+                # Use binary search to narrow down the exact boundary (reduces OCR calls)
+                boundary = self._binary_search_text_boundary(
+                    cap, last_with_text, frame, trainer_name, find_first=False
+                )
+                
+                # Search around the boundary for black/white frame
+                search_start = max(0, boundary - int(self.fps * 5))
+                search_end = min(self.total_frames - 1, boundary + JUMP)
                 
                 # Coarse search (every 10 frames)
                 approx = self._find_black_white_in_range(cap, search_start, search_end, step=10)
                 if approx:
-                    return self._refine_to_sequence_start(cap, approx)
+                    return self._find_sequence_center(cap, approx)
                 
                 # If not found in immediate area, extend search further
-                extended_end = min(self.total_frames - 1, frame + JUMP * 5)
+                extended_end = min(self.total_frames - 1, frame + JUMP * 2)
                 approx = self._find_black_white_in_range(cap, search_end, extended_end, step=10)
                 if approx:
-                    return self._refine_to_sequence_start(cap, approx)
+                    return self._find_sequence_center(cap, approx)
                 
                 break
         
@@ -872,24 +1205,32 @@ class VideoProcessor:
                 # Fallback: do a more thorough search
                 cut_in = self._find_black_white_in_range(cap, first_frame, max(0, first_frame - int(self.fps * 60)), step=5)
                 if cut_in:
-                    cut_in = self._refine_to_sequence_start(cap, cut_in)
+                    cut_in = self._find_sequence_center(cap, cut_in)
                 else:
                     cut_in = first_frame  # Last resort fallback
             
             # Fast search for cut-out (forwards)
             cut_out = self._find_transition_after_fast(cap, first_frame, trainer_name)
             if cut_out is None:
-                # Fallback: do a more thorough search
-                search_end = min(self.total_frames - 1, first_frame + int(self.fps * 120))
+                # Fallback: do a more thorough search for short battles
+                # Search with smaller steps to catch transitions close to battle end
+                # First try a tight search (30 seconds) with fine steps
+                search_end = min(self.total_frames - 1, first_frame + int(self.fps * 30))
                 cut_out = self._find_black_white_in_range(cap, first_frame, search_end, step=5)
                 if cut_out:
-                    cut_out = self._refine_to_sequence_start(cap, cut_out)
+                    cut_out = self._find_sequence_center(cap, cut_out)
                 else:
-                    # If still not found and near end of video, use end of video
-                    if first_frame > self.total_frames - int(self.fps * 60):
-                        cut_out = self.total_frames - 1
+                    # If not found, try wider search (2 minutes) with coarser steps
+                    search_end = min(self.total_frames - 1, first_frame + int(self.fps * 120))
+                    cut_out = self._find_black_white_in_range(cap, first_frame, search_end, step=10)
+                    if cut_out:
+                        cut_out = self._find_sequence_center(cap, cut_out)
                     else:
-                        cut_out = first_frame  # Last resort fallback
+                        # If still not found and near end of video, use end of video
+                        if first_frame > self.total_frames - int(self.fps * 60):
+                            cut_out = self.total_frames - 1
+                        else:
+                            cut_out = first_frame  # Last resort fallback
             
             # Sanity check: cut_out should be after cut_in
             if cut_out <= cut_in:
@@ -898,7 +1239,7 @@ class VideoProcessor:
                     cap, cut_in + 1, min(self.total_frames - 1, cut_in + int(self.fps * 180)), step=10
                 )
                 if extended_search:
-                    cut_out = self._refine_to_sequence_start(cap, extended_search)
+                    cut_out = self._find_sequence_center(cap, extended_search)
             
             # Final sanity check: if still invalid, try even wider search (5 minutes)
             if cut_out <= cut_in:
@@ -906,7 +1247,7 @@ class VideoProcessor:
                     cap, cut_in + 1, min(self.total_frames - 1, cut_in + int(self.fps * 300)), step=20
                 )
                 if wider_search:
-                    cut_out = self._refine_to_sequence_start(cap, wider_search)
+                    cut_out = self._find_sequence_center(cap, wider_search)
             
             # Skip this battle if we still can't find a valid cut-out
             if cut_out <= cut_in:
@@ -957,7 +1298,8 @@ class VideoProcessor:
             return detections, battles
         
         print(f"\nScanning {self.total_frames} frames for trainers: {detect_trainers}")
-        print(f"Sample interval: every {self.TRAINER_SAMPLE_INTERVAL} frames")
+        print(f"Sample interval: {self.EARLY_GAME_INTERVAL} frames (early) / {self.TRAINER_SAMPLE_INTERVAL} frames (normal)")
+        print(f"Transition search: {self.TRANSITION_JUMP} frame jumps with binary search refinement")
         print(f"Using {self.num_workers} worker threads for cut point detection")
         print("-" * 70, flush=True)
         
@@ -971,12 +1313,15 @@ class VideoProcessor:
             cap = cv2.VideoCapture(str(self.video_path))
             
             frame_num = 0
-            detections_found = set()  # Track which frames we've already detected at
+            # Track detections PER TRAINER to avoid filtering different trainers as duplicates
+            detections_per_trainer: dict[str, list[int]] = {t: [] for t in detect_trainers}
             ocr_calls = 0  # Track OCR calls for performance monitoring
+            frames_checked = 0
             
             while frame_num < self.total_frames:
                 # OPTIMIZATION: Run OCR ONCE per frame, then check all trainers
                 ocr_text = self._get_ocr_text_at_frame(cap, frame_num)
+                frames_checked += 1
                 
                 if ocr_text:  # Only count and check if OCR returned text
                     ocr_calls += 1
@@ -988,13 +1333,24 @@ class VideoProcessor:
                     # Check all trainers against this single OCR result
                     for trainer_name in detect_trainers:
                         if self._text_contains_trainer_pattern(ocr_text, trainer_name):
-                            # Check if we're too close to an existing detection (avoid duplicates)
-                            too_close = any(abs(frame_num - d) < self.TRAINER_SAMPLE_INTERVAL * 5 
-                                           for d in detections_found)
+                            # Check if we're too close to an existing detection OF THE SAME TRAINER
+                            # Use current interval for proximity check, but be more lenient for rapid battles
+                            current_interval = self.EARLY_GAME_INTERVAL if frame_num < self.EARLY_GAME_THRESHOLD else self.TRAINER_SAMPLE_INTERVAL
+                            
+                            # Special handling for trainers that appear multiple times in quick succession
+                            # Kimono Girls: 5 battles in a row, each ~10 seconds apart
+                            # Use smaller proximity threshold (just 1x interval instead of 2x)
+                            if trainer_name.lower() == "kimono girl":
+                                proximity_multiplier = 1  # More lenient for Kimono Girls
+                            else:
+                                proximity_multiplier = 2  # Standard threshold
+                            
+                            too_close = any(abs(frame_num - d) < current_interval * proximity_multiplier 
+                                           for d in detections_per_trainer[trainer_name])
                             
                             if not too_close:
                                 print(f"  Found {trainer_name} at frame {frame_num} ({frame_num/self.fps:.1f}s) - processing...", flush=True)
-                                detections_found.add(frame_num)
+                                detections_per_trainer[trainer_name].append(frame_num)
                                 
                                 # Submit to worker thread
                                 future = executor.submit(
@@ -1002,12 +1358,17 @@ class VideoProcessor:
                                     trainer_name, frame_num, results_queue
                                 )
                                 pending_tasks.append(future)
-                                break  # Only detect one trainer per frame
+                                # Don't break - allow multiple trainers to be detected in the same frame
+                                # (e.g., if OCR text contains multiple trainer names, though unlikely)
                 
-                frame_num += self.TRAINER_SAMPLE_INTERVAL
+                # ADAPTIVE SAMPLING: More frequent checks early in video to catch short battles
+                if frame_num < self.EARLY_GAME_THRESHOLD:
+                    frame_num += self.EARLY_GAME_INTERVAL  # Every 2 sec for first 10 min
+                else:
+                    frame_num += self.TRAINER_SAMPLE_INTERVAL  # Every 6 sec after that
                 
                 # Progress
-                if frame_num % (self.TRAINER_SAMPLE_INTERVAL * 10) == 0:
+                if frames_checked % 50 == 0:
                     pct = (frame_num / self.total_frames) * 100
                     elapsed = time.time() - start_time
                     print(f"  ... {pct:.0f}% scanned ({ocr_calls} OCR calls in {elapsed:.1f}s)", flush=True)
@@ -1276,6 +1637,13 @@ def main():
                        help="Output JSON file path (default: [video_name].json)")
     parser.add_argument("--debug-ocr", action="store_true",
                        help="Print OCR text for debugging")
+    # Performance tuning
+    parser.add_argument("--transition-jump", type=int, default=720,
+                       help="Frame jump for transition search (default: 720 = 3sec at 240fps)")
+    parser.add_argument("--early-interval", type=int, default=480,
+                       help="Sample interval for early game in frames (default: 480 = 2sec at 240fps)")
+    parser.add_argument("--normal-interval", type=int, default=1440,
+                       help="Sample interval for normal scanning in frames (default: 1440 = 6sec at 240fps)")
     
     args = parser.parse_args()
     
@@ -1297,7 +1665,10 @@ def main():
             game_config=game_config,
             downscale_factor=args.downscale,
             num_workers=args.workers,
-            debug_ocr=args.debug_ocr
+            debug_ocr=args.debug_ocr,
+            transition_jump=args.transition_jump,
+            early_interval=args.early_interval,
+            normal_interval=args.normal_interval
         )
         
         detections, battles = processor.analyze(detect_trainers=trainers)
@@ -1340,3 +1711,4 @@ def main():
 
 if __name__ == "__main__":
     exit(main())
+
