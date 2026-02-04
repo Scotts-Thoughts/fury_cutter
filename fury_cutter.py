@@ -64,7 +64,7 @@ PREMIERE_LABELS = {
     "will": "E4", "bruno": "E4", "karen": "E4",
     "sidney": "E4", "phoebe": "E4", "glacia": "E4", "drake": "E4",
     "lorelei": "E4", "agatha": "E4", "lance": "E4",
-    "shauntal": "E4", "marshall": "E4", "grimsley": "E4", "caitlin": "E4",
+    "shauntal": "E4", "marshal": "E4", "grimsley": "E4", "caitlin": "E4",
     
     # Champion -> "Champion" label (key 4)
     "cynthia": "Champion", "red": "Champion", "steven": "Champion", "wallace": "Champion", "champion": "Champion",
@@ -131,15 +131,18 @@ class GameConfig:
 # Game configurations
 GAME_CONFIGS = {
     # Generation 5
+    # Gen5 header shows "[trainer]'s Team" in header bar
+    # Optimized crop (1508, 22, 374, 36) focuses on header text and avoids Pokemon info below
     "black": GameConfig(
         name="Pokemon Black",
         generation=Generation.GEN5,
         platform=Platform.NINTENDO_DS,
         ocr_pattern="team",  # "[trainer]'s Team"
+        ocr_region=Region(x=1508, y=22, width=374, height=36),
         trainers=[
             "n", "cheren", "bianca", "cress", "chili", "cilan",
             "lenora", "burgh", "elesa", "clay", "skyla", "brycen",
-            "drayden", "shauntal", "marshall", "grimsley", "caitlin", "ghetsis"
+            "drayden", "shauntal", "marshal", "grimsley", "caitlin", "ghetsis"
         ]
     ),
     
@@ -164,7 +167,7 @@ GAME_CONFIGS = {
         generation=Generation.GEN4,
         platform=Platform.NINTENDO_DS,
         ocr_pattern="leader",  # "Leader [name]" or "Rival #" or "Elite Four [name]"
-        ocr_region=Region(x=1490, y=20, width=400, height=35),
+        ocr_region=Region(x=1100, y=20, width=820, height=90),  # Default DS region
         trainers=[
             "rival", "falkner", "bugsy", "whitney", "morty", "chuck",
             "jasmine", "pryce", "clair", "will", "koga", "bruno",
@@ -297,7 +300,7 @@ class VideoProcessor:
     
     BLACK_MEAN_THRESHOLD = 5   # Stricter - true black frames have mean ~0
     WHITE_MEAN_THRESHOLD = 250  # Stricter - true white frames have mean ~255
-    TRAINER_SAMPLE_INTERVAL = 960  # Check for trainer every N frames (6 sec at 240fps)
+    TRAINER_SAMPLE_INTERVAL = 960  # Check for trainer every X frames (6 sec at 240fps)
     
     # Performance tuning for transition search
     # Larger jumps = fewer OCR calls, but wider search window for black/white detection
@@ -305,7 +308,7 @@ class VideoProcessor:
     
     # Adaptive sampling for early-game short battles
     EARLY_GAME_INTERVAL = 240   # Check every 2 seconds for first 10 minutes
-    EARLY_GAME_THRESHOLD = 43200  # First 10 min at 240fps
+    EARLY_GAME_THRESHOLD = 43200  # First 3 min at 240fps
     
     def __init__(self, video_path: Path, game_config: GameConfig,
                  downscale_factor: float = 0.25,
@@ -755,10 +758,12 @@ class VideoProcessor:
             
             if ocr_pattern == "team":
                 # Gen5 pattern: "[trainer]'s Team"
-                search_pattern = f"{trainer_lower}'s team"
-                search_pattern_alt = f"{trainer_lower}s team"  # OCR sometimes misses apostrophe
+                # Use word boundary to avoid matching "rolan's team" or "warren's team" as "n's team"
+                # \b ensures the trainer name starts at a word boundary (not preceded by a letter)
+                pattern1 = rf"\b{re.escape(trainer_lower)}['']?s\s+team"
+                pattern2 = rf"\b{re.escape(trainer_lower)}['']?s\s+team"  # Same pattern, just for clarity
                 
-                if search_pattern in text_clean or search_pattern_alt in text_clean:
+                if re.search(pattern1, text_clean) or re.search(pattern2, text_clean):
                     return True, text_clean
                     
             elif ocr_pattern == "leader":
