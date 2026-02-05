@@ -88,10 +88,13 @@ class Platform(Enum):
     """Supported gaming platforms with different screen layouts."""
     NINTENDO_DS = "nds"
     NINTENDO_GBA = "gba"
+    GAMEBOY = "gb"  # Game Boy / Game Boy Color
 
 
 class Generation(Enum):
     """Pokemon game generations."""
+    GEN1 = 1
+    GEN2 = 2
     GEN3 = 3
     GEN4 = 4
     GEN5 = 5
@@ -254,6 +257,61 @@ GAME_CONFIGS = {
             "agatha", "lance", "champion"
         ]
     ),
+    
+    # Generation 2 - Crystal
+    # Gen2 header shows "[trainer]'s Team" in header bar (similar to Gen5 pattern)
+    # OCR region: x=1548, y=40, w=355, h=34
+    # Gameplay region: GameBoy layout - x=400, y=36, w=1120, h=1008
+    "crystal": GameConfig(
+        name="Pokemon Crystal",
+        generation=Generation.GEN2,
+        platform=Platform.GAMEBOY,
+        ocr_pattern="team",  # "[trainer]'s Team"
+        ocr_region=Region(x=1548, y=40, width=355, height=34),
+        gameplay_region=Region(x=400, y=36, width=1120, height=1008),
+        trainers=[
+            "rival", "falkner", "bugsy", "whitney", "morty", "chuck",
+            "pryce", "jasmine", "clair", "will", "koga", "bruno",
+            "karen", "lance", "brock", "misty", "lt. surge", "janine",
+            "erika", "blaine", "sabrina", "blue", "red"
+        ]
+    ),
+    
+    # Generation 1 - Yellow
+    # Gen1 header shows "Rival #'s Team" or "[trainer]'s Team" in header bar
+    # OCR region: x=1548, y=40, w=355, h=34 (same as Crystal)
+    # Gameplay region: GameBoy layout - x=400, y=36, w=1120, h=1008
+    "yellow": GameConfig(
+        name="Pokemon Yellow",
+        generation=Generation.GEN1,
+        platform=Platform.GAMEBOY,
+        ocr_pattern="team",  # "Rival #'s Team" or "[trainer]'s Team"
+        ocr_region=Region(x=1548, y=40, width=355, height=34),
+        gameplay_region=Region(x=400, y=36, width=1120, height=1008),
+        trainers=[
+            "rival", "brock", "misty", "lt. surge", "erika", "koga",
+            "blaine", "sabrina", "giovanni", "lorelei", "bruno", "agatha",
+            "lance", "champion"
+        ]
+    ),
+    
+    # Generation 1 - Red
+    # Gen1 header shows "Rival #'s Team" or "[trainer]'s Team" in header bar
+    # OCR region: x=1548, y=40, w=355, h=34 (same as Crystal)
+    # Gameplay region: GameBoy layout - x=400, y=36, w=1120, h=1008
+    "red": GameConfig(
+        name="Pokemon Red",
+        generation=Generation.GEN1,
+        platform=Platform.GAMEBOY,
+        ocr_pattern="team",  # "Rival #'s Team" or "[trainer]'s Team"
+        ocr_region=Region(x=1548, y=40, width=355, height=34),
+        gameplay_region=Region(x=400, y=36, width=1120, height=1008),
+        trainers=[
+            "rival", "brock", "misty", "lt. surge", "erika", "koga",
+            "blaine", "sabrina", "giovanni", "lorelei", "bruno", "agatha",
+            "lance", "champion"
+        ]
+    ),
 }
 
 # Legacy platform configs (for backwards compatibility)
@@ -261,6 +319,10 @@ PLATFORM_CONFIGS = {
     Platform.NINTENDO_DS: {
         "gameplay": Region(x=448, y=19, width=1024, height=768),
         "ocr_region": Region(x=1100, y=20, width=820, height=90),
+    },
+    Platform.GAMEBOY: {
+        "gameplay": Region(x=400, y=36, width=1120, height=1008),
+        "ocr_region": Region(x=1548, y=40, width=355, height=34),
     }
 }
 
@@ -437,9 +499,30 @@ class VideoProcessor:
         ocr_pattern = self.game_config.ocr_pattern
         
         if ocr_pattern == "team":
+            # Special case for rival in Gen1/Gen2: "Rival #'s Team" (e.g., "rival 2's team")
+            if trainer_lower == "rival":
+                # Match "rival's team" or "rival #'s team" where # is any digit(s)
+                # Handle both straight (') and curly (') apostrophes
+                # Also handle OCR errors like "rivalt's team"
+                rival_patterns = [
+                    r"\brival\s*\d+['\u2019]?s\s+team",  # "rival 2's team", "rival2's team"
+                    r"\brival['\u2019]?s\s+team",         # "rival's team"
+                    r"\brivalt['\u2019]?s\s+team",        # OCR error: "rivalt's team"
+                ]
+                for pattern in rival_patterns:
+                    if re.search(pattern, text):
+                        return True
+                return False
+            
+            # Special case for Lance in Gen2: can appear as "Champion's Team"
+            if trainer_lower == "lance":
+                if "lance" in text or "champion" in text:
+                    return True
+                return False
+            
             # Use word boundary to avoid matching "rolan's team" or "warren's team" as "n's team"
             # \b ensures the trainer name starts at a word boundary (not preceded by a letter)
-            pattern = rf"\b{re.escape(trainer_lower)}['']?s\s+team"
+            pattern = rf"\b{re.escape(trainer_lower)}[''\u2019]?s\s+team"
             return bool(re.search(pattern, text))
         elif ocr_pattern == "leader":
             if trainer_lower == "rival":
@@ -659,10 +742,12 @@ class VideoProcessor:
         
         # Run OCR with preprocessing appropriate for the generation
         try:
-            ocr_pattern = self.game_config.ocr_pattern
+            generation = self.game_config.generation
             
-            if ocr_pattern == "leader":
-                # Gen3/Gen4: Use percentile-based preprocessing for colored backgrounds
+            # Gen1/Gen2/Gen3/Gen4 need preprocessing for colored/textured backgrounds
+            # Gen5 has clean layout and works with raw OCR
+            if generation in [Generation.GEN1, Generation.GEN2, Generation.GEN3, Generation.GEN4]:
+                # Use percentile-based preprocessing for colored backgrounds
                 gray = cv2.cvtColor(ocr_crop, cv2.COLOR_BGR2GRAY)
                 threshold_value = np.percentile(gray, 20)  # Darkest 20% = text
                 _, binary = cv2.threshold(gray, threshold_value, 255, cv2.THRESH_BINARY_INV)
@@ -721,10 +806,12 @@ class VideoProcessor:
         
         # Run OCR with preprocessing appropriate for the generation
         try:
-            ocr_pattern = self.game_config.ocr_pattern
+            generation = self.game_config.generation
             
-            if ocr_pattern == "leader":
-                # Gen3/Gen4: Use percentile-based preprocessing for colored backgrounds
+            # Gen1/Gen2/Gen3/Gen4 need preprocessing for colored/textured backgrounds
+            # Gen5 has clean layout and works with raw OCR
+            if generation in [Generation.GEN1, Generation.GEN2, Generation.GEN3, Generation.GEN4]:
+                # Use percentile-based preprocessing for colored backgrounds
                 gray = cv2.cvtColor(ocr_crop, cv2.COLOR_BGR2GRAY)
                 threshold_value = np.percentile(gray, 20)  # Darkest 20% = text
                 _, binary = cv2.threshold(gray, threshold_value, 255, cv2.THRESH_BINARY_INV)
@@ -757,11 +844,32 @@ class VideoProcessor:
             trainer_lower = trainer_name.lower()
             
             if ocr_pattern == "team":
-                # Gen5 pattern: "[trainer]'s Team"
+                # Gen5/Gen2/Gen1 pattern: "[trainer]'s Team"
+                # Special case for rival in Gen1/Gen2: "Rival #'s Team" (e.g., "rival 2's team")
+                if trainer_lower == "rival":
+                    # Match "rival's team" or "rival #'s team" where # is any digit(s)
+                    # Handle both straight (') and curly (') apostrophes
+                    # Also handle OCR errors like "rivalt's team"
+                    rival_patterns = [
+                        r"\brival\s*\d+['\u2019]?s\s+team",  # "rival 2's team", "rival2's team"
+                        r"\brival['\u2019]?s\s+team",         # "rival's team"
+                        r"\brivalt['\u2019]?s\s+team",        # OCR error: "rivalt's team"
+                    ]
+                    for pattern in rival_patterns:
+                        if re.search(pattern, text_clean):
+                            return True, text_clean
+                    return False, text_clean
+                
+                # Special case for Lance in Gen2: can appear as "Champion's Team"
+                if trainer_lower == "lance":
+                    if "lance" in text_clean or "champion" in text_clean:
+                        return True, text_clean
+                    return False, text_clean
+                
                 # Use word boundary to avoid matching "rolan's team" or "warren's team" as "n's team"
                 # \b ensures the trainer name starts at a word boundary (not preceded by a letter)
-                pattern1 = rf"\b{re.escape(trainer_lower)}['']?s\s+team"
-                pattern2 = rf"\b{re.escape(trainer_lower)}['']?s\s+team"  # Same pattern, just for clarity
+                pattern1 = rf"\b{re.escape(trainer_lower)}[''\u2019]?s\s+team"
+                pattern2 = rf"\b{re.escape(trainer_lower)}[''\u2019]?s\s+team"  # Same pattern, just for clarity
                 
                 if re.search(pattern1, text_clean) or re.search(pattern2, text_clean):
                     return True, text_clean
