@@ -1731,57 +1731,21 @@ def export_automation_blocks_json(battles: list[BattleSequence], fps: float, out
     print(f"Exported {len(labels_data)} labels for Automation Blocks to: {output_path}")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Fury Cutter - Video Analysis Tool for Pokemon Game Editing"
-    )
-    
-    parser.add_argument("video", type=Path, help="Path to video file")
-    parser.add_argument("--version", "-v", type=str, required=True,
-                       choices=list(GAME_CONFIGS.keys()),
-                       help=f"Game version: {', '.join(GAME_CONFIGS.keys())}")
-    parser.add_argument("--downscale", "-d", type=float, default=0.25,
-                       help="Downscale factor for faster processing")
-    parser.add_argument("--workers", "-w", type=int, default=None,
-                       help="Number of worker threads")
-    parser.add_argument("--trainers", "-t", nargs="+", default=None,
-                       help="Override trainer list (default: use game's trainer list)")
-    parser.add_argument("--output", "-o", type=Path, default=None,
-                       help="Output JSON file path (default: [video_name].json)")
-    parser.add_argument("--debug-ocr", action="store_true",
-                       help="Print OCR text for debugging")
-    # Performance tuning
-    parser.add_argument("--transition-jump", type=int, default=720,
-                       help="Frame jump for transition search (default: 720 = 3sec at 240fps)")
-    parser.add_argument("--early-interval", type=int, default=480,
-                       help="Sample interval for early game in frames (default: 480 = 2sec at 240fps)")
-    parser.add_argument("--normal-interval", type=int, default=1440,
-                       help="Sample interval for normal scanning in frames (default: 1440 = 6sec at 240fps)")
-    
-    args = parser.parse_args()
-    
-    if not args.video.exists():
-        print(f"Error: Video file not found: {args.video}")
-        return 1
-    
-    # Get game configuration
-    game_config = GAME_CONFIGS[args.version]
-    
-    # Use game's trainer list unless overridden
-    trainers = args.trainers if args.trainers else game_config.trainers
-    
-    print(f"Game: {game_config.name} (Generation {game_config.generation.value})")
-    
+def process_single_video(video_path: Path, game_config: GameConfig, trainers: list[str],
+                         downscale: float, workers: int, debug_ocr: bool,
+                         transition_jump: int, early_interval: int, normal_interval: int,
+                         output_path: Path = None) -> int:
+    """Process a single video file. Returns 0 on success, 1 on error."""
     try:
         processor = VideoProcessor(
-            video_path=args.video,
+            video_path=video_path,
             game_config=game_config,
-            downscale_factor=args.downscale,
-            num_workers=args.workers,
-            debug_ocr=args.debug_ocr,
-            transition_jump=args.transition_jump,
-            early_interval=args.early_interval,
-            normal_interval=args.normal_interval
+            downscale_factor=downscale,
+            num_workers=workers,
+            debug_ocr=debug_ocr,
+            transition_jump=transition_jump,
+            early_interval=early_interval,
+            normal_interval=normal_interval
         )
         
         detections, battles = processor.analyze(detect_trainers=trainers)
@@ -1805,21 +1769,118 @@ def main():
                 print()
             
             # Export to Timebolt JSON
-            output_path = args.output or args.video.with_suffix('.json')
+            out = output_path or video_path.with_suffix('.json')
             video_duration = processor.total_frames / processor.fps
-            export_timebolt_json(battles, video_duration, processor.fps, output_path)
+            export_timebolt_json(battles, video_duration, processor.fps, out)
             
             # Export to Automation Blocks JSON
-            ab_output_path = output_path.with_name(output_path.stem + '_automation_blocks.json')
+            ab_output_path = out.with_name(out.stem + '_automation_blocks.json')
             export_automation_blocks_json(battles, processor.fps, ab_output_path)
         
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error processing {video_path.name}: {e}")
         import traceback
         traceback.print_exc()
         return 1
     
     return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Fury Cutter - Video Analysis Tool for Pokemon Game Editing"
+    )
+    
+    parser.add_argument("video", type=Path,
+                       help="Path to a video file or a folder containing mp4 files")
+    parser.add_argument("--version", "-v", type=str, required=True,
+                       choices=list(GAME_CONFIGS.keys()),
+                       help=f"Game version: {', '.join(GAME_CONFIGS.keys())}")
+    parser.add_argument("--downscale", "-d", type=float, default=0.25,
+                       help="Downscale factor for faster processing")
+    parser.add_argument("--workers", "-w", type=int, default=None,
+                       help="Number of worker threads")
+    parser.add_argument("--trainers", "-t", nargs="+", default=None,
+                       help="Override trainer list (default: use game's trainer list)")
+    parser.add_argument("--output", "-o", type=Path, default=None,
+                       help="Output JSON file path (default: [video_name].json). "
+                            "Ignored when processing a folder.")
+    parser.add_argument("--debug-ocr", action="store_true",
+                       help="Print OCR text for debugging")
+    # Performance tuning
+    parser.add_argument("--transition-jump", type=int, default=720,
+                       help="Frame jump for transition search (default: 720 = 3sec at 240fps)")
+    parser.add_argument("--early-interval", type=int, default=480,
+                       help="Sample interval for early game in frames (default: 480 = 2sec at 240fps)")
+    parser.add_argument("--normal-interval", type=int, default=1440,
+                       help="Sample interval for normal scanning in frames (default: 1440 = 6sec at 240fps)")
+    
+    args = parser.parse_args()
+    
+    if not args.video.exists():
+        print(f"Error: Path not found: {args.video}")
+        return 1
+    
+    # Get game configuration
+    game_config = GAME_CONFIGS[args.version]
+    
+    # Use game's trainer list unless overridden
+    trainers = args.trainers if args.trainers else game_config.trainers
+    
+    print(f"Game: {game_config.name} (Generation {game_config.generation.value})")
+    
+    # Determine if we're processing a single file or a folder
+    if args.video.is_dir():
+        mp4_files = sorted(args.video.glob("*.mp4"))
+        if not mp4_files:
+            print(f"Error: No .mp4 files found in folder: {args.video}")
+            return 1
+        
+        print(f"\nFound {len(mp4_files)} mp4 file(s) in: {args.video}")
+        for f in mp4_files:
+            print(f"  - {f.name}")
+        
+        errors = 0
+        for i, video_file in enumerate(mp4_files, 1):
+            print(f"\n{'#' * 70}")
+            print(f"# Processing file {i}/{len(mp4_files)}: {video_file.name}")
+            print(f"{'#' * 70}")
+            
+            result = process_single_video(
+                video_path=video_file,
+                game_config=game_config,
+                trainers=trainers,
+                downscale=args.downscale,
+                workers=args.workers,
+                debug_ocr=args.debug_ocr,
+                transition_jump=args.transition_jump,
+                early_interval=args.early_interval,
+                normal_interval=args.normal_interval,
+                # Each file gets its own output JSON (named after the video)
+                output_path=None,
+            )
+            if result != 0:
+                errors += 1
+        
+        print(f"\n{'=' * 70}")
+        print(f"Batch complete: {len(mp4_files) - errors}/{len(mp4_files)} succeeded")
+        if errors:
+            print(f"  {errors} file(s) had errors")
+        print(f"{'=' * 70}")
+        return 1 if errors else 0
+    else:
+        return process_single_video(
+            video_path=args.video,
+            game_config=game_config,
+            trainers=trainers,
+            downscale=args.downscale,
+            workers=args.workers,
+            debug_ocr=args.debug_ocr,
+            transition_jump=args.transition_jump,
+            early_interval=args.early_interval,
+            normal_interval=args.normal_interval,
+            output_path=args.output,
+        )
 
 
 if __name__ == "__main__":
