@@ -1773,9 +1773,9 @@ def process_single_video(video_path: Path, game_config: GameConfig, trainers: li
             video_duration = processor.total_frames / processor.fps
             export_timebolt_json(battles, video_duration, processor.fps, out)
             
-            # Export to Automation Blocks JSON
-            ab_output_path = out.with_name(out.stem + '_automation_blocks.json')
-            export_automation_blocks_json(battles, processor.fps, ab_output_path)
+            # Export to Automation Blocks JSON (temporarily disabled)
+            # ab_output_path = out.with_name(out.stem + '_automation_blocks.json')
+            # export_automation_blocks_json(battles, processor.fps, ab_output_path)
         
     except Exception as e:
         print(f"Error processing {video_path.name}: {e}")
