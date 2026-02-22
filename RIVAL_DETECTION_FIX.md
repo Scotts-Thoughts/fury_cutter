@@ -112,3 +112,4 @@ This fix ensures that **ALL Gen1 and Gen2 rival battles will be detected correct
 Both methods now check `generation` instead of `ocr_pattern` to determine the appropriate OCR method.
 
 
+

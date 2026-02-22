@@ -541,6 +541,8 @@ class VideoProcessor:
                     r'[rk]va[il1r]\s*\d*', # flexible: rval, kval, rvai, kvai + optional digit
                     r'iva[il1]?\s*\d+',   # misread: "ival 1", "iva 2"
                     r'rva[il1]\s*\d*',    # misread: "rvai", "rval" (tan theme artifacts)
+                    r'rival[gG]',         # misread: "rivalg" where 6 is read as G (FireRed Rival 6)
+                    r'riva[il1][gG]',     # misread: "rivalg", "rivaig" (6 as G)
                 ]
                 for pattern in rival_patterns:
                     if re.search(pattern, text):
@@ -892,6 +894,8 @@ class VideoProcessor:
                         r'[rk]va[il1r]\s*\d*', # flexible: rval, kval, rvai, kvai
                         r'iva[il1]?\s*\d+',   # misread: "ival 1", "iva 2"
                         r'rva[il1]\s*\d*',    # misread: "rvai", "rval" (tan theme)
+                        r'rival[gG]',         # misread: "rivalg" where 6 is read as G (FireRed Rival 6)
+                        r'riva[il1][gG]',     # misread: "rivalg", "rivaig" (6 as G)
                     ]
                     for pattern in rival_patterns:
                         if re.search(pattern, text_clean):
