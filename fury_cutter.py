@@ -20,6 +20,14 @@ import json
 import re
 from PIL import Image
 
+# OBS chapter markers (Battle/Overworld) for fast cut points
+try:
+    from extract_obs_chapters import get_obs_chapters
+    OBS_CHAPTERS_AVAILABLE = True
+except ImportError:
+    get_obs_chapters = None
+    OBS_CHAPTERS_AVAILABLE = False
+
 # OCR setup
 try:
     import pytesseract
@@ -122,6 +130,10 @@ class GameConfig:
     ocr_region: Region = None
     # Gameplay region for black/white detection
     gameplay_region: Region = None
+    # Template matching region (defaults to ocr_region, override for games with wide OCR regions)
+    template_region: Region = None
+    # Optional: trainer names for IN/OUT chapter markers (format "IN - TRAINER" / "OUT - TRAINER"). When set and file has these markers, battles are built from markers only (no template/OCR scan).
+    marker_trainers: Optional[list[str]] = None
     
     def __post_init__(self):
         # Default regions for Nintendo DS
@@ -129,6 +141,8 @@ class GameConfig:
             self.gameplay_region = Region(x=448, y=19, width=1024, height=768)
         if self.ocr_region is None:
             self.ocr_region = Region(x=1100, y=20, width=820, height=90)
+        if self.template_region is None:
+            self.template_region = self.ocr_region
 
 
 # Game configurations
@@ -146,6 +160,26 @@ GAME_CONFIGS = {
             "n", "cheren", "bianca", "cress", "chili", "cilan",
             "lenora", "burgh", "elesa", "clay", "skyla", "brycen",
             "drayden", "shauntal", "marshal", "grimsley", "caitlin", "ghetsis"
+        ],
+        marker_trainers=[
+            "Cheren",
+            "Bianca",
+            "N",
+            "Cress",
+            "Chili",
+            "Cilan",
+            "Lenora",
+            "Burgh",
+            "Elesa",
+            "Clay",
+            "Skyla",
+            "Brycen",
+            "Drayden",
+            "Shauntal",
+            "Marshal",
+            "Grimsley",
+            "Caitlin",
+            "Ghetsis",
         ]
     ),
     
@@ -162,6 +196,26 @@ GAME_CONFIGS = {
             "rival", "roark", "gardenia", "fantina", "maylene", "wake",
             "byron", "candice", "volkner", "aaron", "bertha", "flint",
             "lucian", "cynthia", "mars", "jupiter", "saturn", "cyrus"
+        ],
+        marker_trainers=[
+            "Rival",
+            "Leader Roark",
+            "Leader Gardenia",
+            "Leader Fantina",
+            "Leader Maylene",
+            "Leader Wake",
+            "Leader Byron",
+            "Leader Candice",
+            "Leader Volkner",
+            "Elite Four Aaron",
+            "Elite Four Bertha",
+            "Elite Four Flint",
+            "Elite Four Lucian",
+            "Champion Cynthia",
+            "Commander Mars",
+            "Commander Jupiter",
+            "Commander Saturn",
+            "Galactic Boss Cyrus",
         ]
     ),
     
@@ -171,12 +225,48 @@ GAME_CONFIGS = {
         platform=Platform.NINTENDO_DS,
         ocr_pattern="leader",  # "Leader [name]" or "Rival #" or "Elite Four [name]"
         ocr_region=Region(x=1100, y=20, width=820, height=90),  # Default DS region
+        template_region=Region(x=1460, y=28, width=460, height=46),  # Tight title bar crop
         trainers=[
             "rival", "falkner", "bugsy", "whitney", "morty", "chuck",
             "jasmine", "pryce", "clair", "will", "koga", "bruno",
             "karen", "lance", "brock", "misty", "lt. surge", "erika",
             "sabrina", "blaine", "janine", "blue", "red", "silver",
             "kimono girl"
+        ],
+        marker_trainers=[
+            "Leader Falkner",
+            "Leader Bugsy",
+            "Leader Whitney",
+            "Leader Morty",
+            "Leader Chuck",
+            "Leader Jasmine",
+            "Leader Pryce",
+            "Leader Clair",
+            "Elite Four Will",
+            "Elite Four Koga",
+            "Elite Four Bruno",
+            "Elite Four Karen",
+            "Champion Lance",
+            "Leader Brock",
+            "Leader Misty",
+            "Leader Lt. Surge",
+            "Leader Erika",
+            "Leader Sabrina",
+            "Leader Blaine",
+            "Leader Janine",
+            "Leader Blue",
+            "Pokemon Trainer Red",
+            "Passerby Boy",
+            "Rival Silver",
+            "Rival1",
+            "Rival2",
+            "Rival3",
+            "Executive Petrel",
+            "Kimono Girl Naoko",
+            "Kimono Girl Sayo",
+            "Kimono Girl Zuki",
+            "Kimono Girl Kuni",
+            "Kimono Girl Miki",
         ]
     ),
     
@@ -196,6 +286,23 @@ GAME_CONFIGS = {
             "winona", "tate & liza", "tate and liza", "juan", "wally",
             "maxie", "archie", "sidney", "phoebe", "glacia", "drake",
             "wallace", "steven"
+        ],
+        marker_trainers=[
+            "ELITE_FOUR_SIDNEY", "ELITE_FOUR_PHOEBE", "ELITE_FOUR_GLACIA", "ELITE_FOUR_DRAKE",
+            "LEADER_ROXANNE_1", "LEADER_BRAWLY_1", "LEADER_WATTSON_1", "LEADER_FLANNERY_1",
+            "LEADER_NORMAN_1", "LEADER_WINONA_1", "LEADER_TATE_AND_LIZA_1", "LEADER_JUAN_1",
+            "RIVAL_WALLY_VR_1", "CHAMPION_WALLACE", "RIVAL_STEVEN",
+            "RIVAL_BRENDAN_ROUTE_103_MUDKIP", "RIVAL_BRENDAN_ROUTE_110_MUDKIP", "RIVAL_BRENDAN_ROUTE_119_MUDKIP",
+            "RIVAL_BRENDAN_ROUTE_103_TREECKO", "RIVAL_BRENDAN_ROUTE_110_TREECKO", "RIVAL_BRENDAN_ROUTE_119_TREECKO",
+            "RIVAL_BRENDAN_ROUTE_103_TORCHIC", "RIVAL_BRENDAN_ROUTE_110_TORCHIC", "RIVAL_BRENDAN_ROUTE_119_TORCHIC",
+            "RIVAL_MAY_ROUTE_103_MUDKIP", "RIVAL_MAY_ROUTE_110_MUDKIP", "RIVAL_MAY_ROUTE_119_MUDKIP",
+            "RIVAL_MAY_ROUTE_103_TREECKO", "RIVAL_MAY_ROUTE_110_TREECKO", "RIVAL_MAY_ROUTE_119_TREECKO",
+            "RIVAL_MAY_ROUTE_103_TORCHIC", "RIVAL_MAY_ROUTE_110_TORCHIC", "RIVAL_MAY_ROUTE_119_TORCHIC",
+            "RIVAL_BRENDAN_RUSTBORO_TREECKO", "RIVAL_BRENDAN_RUSTBORO_MUDKIP", "RIVAL_BRENDAN_RUSTBORO_TORCHIC",
+            "RIVAL_MAY_RUSTBORO_MUDKIP", "RIVAL_MAY_RUSTBORO_TREECKO", "RIVAL_MAY_RUSTBORO_TORCHIC",
+            "RIVAL_BRENDAN_LILYCOVE_MUDKIP", "RIVAL_BRENDAN_LILYCOVE_TREECKO", "RIVAL_BRENDAN_LILYCOVE_TORCHIC",
+            "RIVAL_MAY_LILYCOVE_MUDKIP", "RIVAL_MAY_LILYCOVE_TREECKO", "RIVAL_MAY_LILYCOVE_TORCHIC",
+            "MAGMA_LEADER_MAXIE_MT_CHIMNEY", "MAGMA_LEADER_MAXIE_MAGMA_HIDEOUT", "AQUA_LEADER_ARCHIE",
         ]
     ),
     
@@ -241,6 +348,21 @@ GAME_CONFIGS = {
             "brock", "misty", "lt. surge", "surge", "erika", "koga",
             "sabrina", "blaine", "giovanni", "rival", "lorelei", "bruno",
             "agatha", "lance", "champion"
+        ],
+        marker_trainers=[
+            "ELITE_FOUR_LORELEI", "ELITE_FOUR_BRUNO", "ELITE_FOUR_AGATHA", "ELITE_FOUR_LANCE",
+            "LEADER_BROCK", "LEADER_MISTY", "LEADER_LT_SURGE", "LEADER_ERIKA",
+            "LEADER_KOGA", "LEADER_BLAINE", "LEADER_SABRINA", "BOSS_GIOVANNI_2", "LEADER_GIOVANNI",
+            "RIVAL_OAKS_LAB_SQUIRTLE", "RIVAL_OAKS_LAB_BULBASAUR", "RIVAL_OAKS_LAB_CHARMANDER",
+            "RIVAL_ROUTE22_EARLY_SQUIRTLE", "RIVAL_ROUTE22_EARLY_BULBASAUR", "RIVAL_ROUTE22_EARLY_CHARMANDER",
+            "RIVAL_CERULEAN_SQUIRTLE", "RIVAL_CERULEAN_BULBASAUR", "RIVAL_CERULEAN_CHARMANDER",
+            "RIVAL_SS_ANNE_SQUIRTLE", "RIVAL_SS_ANNE_BULBASAUR", "RIVAL_SS_ANNE_CHARMANDER",
+            "RIVAL_POKENON_TOWER_SQUIRTLE", "RIVAL_POKENON_TOWER_BULBASAUR", "RIVAL_POKENON_TOWER_CHARMANDER",
+            "RIVAL_SILPH_SQUIRTLE", "RIVAL_SILPH_BULBASAUR", "RIVAL_SILPH_CHARMANDER",
+            "RIVAL_ROUTE22_LATE_SQUIRTLE", "RIVAL_ROUTE22_LATE_BULBASAUR", "RIVAL_ROUTE22_LATE_CHARMANDER",
+            "CHAMPION_FIRST_SQUIRTLE", "CHAMPION_FIRST_BULBASAUR", "CHAMPION_FIRST_CHARMANDER",
+            "ELITE_FOUR_LORELEI_2", "ELITE_FOUR_BRUNO_2", "ELITE_FOUR_AGATHA_2", "ELITE_FOUR_LANCE_2",
+            "CHAMPION_REMATCH_SQUIRTLE", "CHAMPION_REMATCH_BULBASAUR", "CHAMPION_REMATCH_CHARMANDER",
         ]
     ),
     
@@ -255,6 +377,21 @@ GAME_CONFIGS = {
             "brock", "misty", "lt. surge", "surge", "erika", "koga",
             "sabrina", "blaine", "giovanni", "rival", "lorelei", "bruno",
             "agatha", "lance", "champion"
+        ],
+        marker_trainers=[
+            "ELITE_FOUR_LORELEI", "ELITE_FOUR_BRUNO", "ELITE_FOUR_AGATHA", "ELITE_FOUR_LANCE",
+            "LEADER_BROCK", "LEADER_MISTY", "LEADER_LT_SURGE", "LEADER_ERIKA",
+            "LEADER_KOGA", "LEADER_BLAINE", "LEADER_SABRINA", "BOSS_GIOVANNI_2", "LEADER_GIOVANNI",
+            "RIVAL_OAKS_LAB_SQUIRTLE", "RIVAL_OAKS_LAB_BULBASAUR", "RIVAL_OAKS_LAB_CHARMANDER",
+            "RIVAL_ROUTE22_EARLY_SQUIRTLE", "RIVAL_ROUTE22_EARLY_BULBASAUR", "RIVAL_ROUTE22_EARLY_CHARMANDER",
+            "RIVAL_CERULEAN_SQUIRTLE", "RIVAL_CERULEAN_BULBASAUR", "RIVAL_CERULEAN_CHARMANDER",
+            "RIVAL_SS_ANNE_SQUIRTLE", "RIVAL_SS_ANNE_BULBASAUR", "RIVAL_SS_ANNE_CHARMANDER",
+            "RIVAL_POKENON_TOWER_SQUIRTLE", "RIVAL_POKENON_TOWER_BULBASAUR", "RIVAL_POKENON_TOWER_CHARMANDER",
+            "RIVAL_SILPH_SQUIRTLE", "RIVAL_SILPH_BULBASAUR", "RIVAL_SILPH_CHARMANDER",
+            "RIVAL_ROUTE22_LATE_SQUIRTLE", "RIVAL_ROUTE22_LATE_BULBASAUR", "RIVAL_ROUTE22_LATE_CHARMANDER",
+            "CHAMPION_FIRST_SQUIRTLE", "CHAMPION_FIRST_BULBASAUR", "CHAMPION_FIRST_CHARMANDER",
+            "ELITE_FOUR_LORELEI_2", "ELITE_FOUR_BRUNO_2", "ELITE_FOUR_AGATHA_2", "ELITE_FOUR_LANCE_2",
+            "CHAMPION_REMATCH_SQUIRTLE", "CHAMPION_REMATCH_BULBASAUR", "CHAMPION_REMATCH_CHARMANDER",
         ]
     ),
     
@@ -274,6 +411,31 @@ GAME_CONFIGS = {
             "pryce", "jasmine", "clair", "will", "koga", "bruno",
             "karen", "lance", "brock", "misty", "lt. surge", "janine",
             "erika", "blaine", "sabrina", "blue", "red"
+        ],
+        marker_trainers=[
+            "FALKNER",
+            "WHITNEY",
+            "BUGSY",
+            "MORTY",
+            "PRYCE",
+            "JASMINE",
+            "CHUCK",
+            "CLAIR",
+            "RIVAL1",
+            "WILL",
+            "KOGA",
+            "BRUNO",
+            "KAREN",
+            "CHAMPION",
+            "BROCK",
+            "MISTY",
+            "LT. SURGE",
+            "ERIKA",
+            "SABRINA",
+            "JANINE",
+            "BLAINE",
+            "BLUE",
+            "RED",
         ]
     ),
     
@@ -292,6 +454,23 @@ GAME_CONFIGS = {
             "rival", "brock", "misty", "lt. surge", "erika", "koga",
             "blaine", "sabrina", "giovanni", "lorelei", "bruno", "agatha",
             "lance", "champion"
+        ],
+        marker_trainers=[
+            "RIVAL1",
+            "RIVAL2",
+            "RIVAL3",
+            "BROCK",
+            "MISTY",
+            "LT. SURGE",
+            "ERIKA",
+            "KOGA",
+            "SABRINA",
+            "BLAINE",
+            "GIOVANNI",
+            "LORELEI",
+            "BRUNO",
+            "AGATHA",
+            "LANCE",
         ]
     ),
     
@@ -310,6 +489,23 @@ GAME_CONFIGS = {
             "rival", "brock", "misty", "lt. surge", "erika", "koga",
             "blaine", "sabrina", "giovanni", "lorelei", "bruno", "agatha",
             "lance", "champion"
+        ],
+        marker_trainers=[
+            "RIVAL1",
+            "RIVAL2",
+            "RIVAL3",
+            "BROCK",
+            "MISTY",
+            "LT. SURGE",
+            "ERIKA",
+            "KOGA",
+            "SABRINA",
+            "BLAINE",
+            "GIOVANNI",
+            "LORELEI",
+            "BRUNO",
+            "AGATHA",
+            "LANCE",
         ]
     ),
 }
@@ -324,6 +520,26 @@ PLATFORM_CONFIGS = {
         "gameplay": Region(x=400, y=36, width=1120, height=1008),
         "ocr_region": Region(x=1548, y=40, width=355, height=34),
     }
+}
+
+# Template matching configuration
+TEMPLATE_MATCH_THRESHOLD = 0.9  # Minimum correlation for a match (TM_CCOEFF_NORMED)
+TEMPLATE_MATCH_THRESHOLD_CHAMPION = 0.95  # Higher threshold for "champion" (avoids matching "Champion" in "Champion Cynthia")
+TEMPLATE_SEARCH_PADDING = 4     # Pixels of positional tolerance around template region
+
+# Map game config keys to template folder names (for shared overlays)
+TEMPLATE_FOLDER_MAP = {
+    "black": "black",
+    "platinum": "platinum",
+    "heartgold": "heartgold",
+    "emerald": "emerald",
+    "ruby": "emerald",       # Same overlay as Emerald
+    "sapphire": "emerald",   # Same overlay as Emerald
+    "firered": "firered",
+    "leafgreen": "firered",  # Same overlay as FireRed
+    "crystal": "crystal",
+    "yellow": "yellow",
+    "red": "red",
 }
 
 
@@ -378,7 +594,8 @@ class VideoProcessor:
                  debug_ocr: bool = False,
                  transition_jump: int = None,
                  early_interval: int = None,
-                 normal_interval: int = None):
+                 normal_interval: int = None,
+                 detection_mode: str = "auto"):
         self.video_path = video_path
         self.game_config = game_config
         self.platform = game_config.platform
@@ -405,6 +622,18 @@ class VideoProcessor:
             "ocr_region": game_config.ocr_region,
         }
         
+        # Template matching setup
+        self.templates = self._load_templates()
+        if detection_mode == "auto":
+            self.use_template_matching = len(self.templates) > 0
+        elif detection_mode == "template":
+            self.use_template_matching = True
+            if not self.templates:
+                print("WARNING: Template mode requested but no templates found. Falling back to OCR.")
+                self.use_template_matching = False
+        else:  # "ocr"
+            self.use_template_matching = False
+        
         # Get video properties
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
@@ -422,7 +651,11 @@ class VideoProcessor:
         print(f"  Total Frames: {self.total_frames}")
         print(f"  Duration: {self.total_frames / self.fps:.2f}s")
         print(f"  Worker threads: {self.num_workers}")
-        print(f"  OCR available: {OCR_AVAILABLE}")
+        if self.use_template_matching:
+            total_templates = sum(len(v) for v in self.templates.values())
+            print(f"  Detection: TEMPLATE MATCHING ({total_templates} templates for {len(self.templates)} trainers)")
+        else:
+            print(f"  Detection: OCR (pytesseract, available={OCR_AVAILABLE})")
     
     def _analyze_frame_range(self, start_frame: int, end_frame: int, 
                              detect_trainers: list[str] = None) -> list[dict]:
@@ -703,6 +936,204 @@ class VideoProcessor:
         
         # Text should be between 3% and 60% of the image
         return min_text_ratio <= text_ratio <= max_text_ratio
+    
+    # ── Template matching methods ──────────────────────────────────────────
+    
+    def _load_templates(self) -> dict[str, list[tuple[str, np.ndarray]]]:
+        """
+        Load template images for the current game.
+        
+        Returns dict mapping canonical trainer names to lists of
+        (template_key, grayscale_image) tuples. Multiple templates per trainer
+        handle variations (e.g., Rival 1 through Rival 6).
+        """
+        templates: dict[str, list[tuple[str, np.ndarray]]] = {}
+        
+        # Find the game key from config name
+        game_key = None
+        for key, config in GAME_CONFIGS.items():
+            if config.name == self.game_config.name:
+                game_key = key
+                break
+        
+        if game_key is None:
+            return templates
+        
+        # Map to template folder (shared overlays)
+        folder_name = TEMPLATE_FOLDER_MAP.get(game_key, game_key)
+        template_dir = Path(__file__).parent / "templates" / folder_name
+        
+        if not template_dir.exists():
+            return templates
+        
+        # Load metadata mapping template filenames to trainer names
+        metadata_path = template_dir / "metadata.json"
+        if not metadata_path.exists():
+            return templates
+        
+        with open(metadata_path) as f:
+            metadata = json.load(f)
+        
+        # Load each template image
+        for template_file in sorted(template_dir.glob("*.png")):
+            template_key = template_file.stem
+            trainer_name = metadata.get(template_key, template_key)
+            
+            template_img = cv2.imread(str(template_file), cv2.IMREAD_GRAYSCALE)
+            if template_img is None:
+                continue
+            
+            # Apply slight Gaussian blur to smooth JPEG compression artifacts
+            template_img = cv2.GaussianBlur(template_img, (3, 3), 0)
+            
+            if trainer_name not in templates:
+                templates[trainer_name] = []
+            templates[trainer_name].append((template_key, template_img))
+        
+        return templates
+    
+    def _get_template_crop(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Crop the template matching region from a frame and convert to grayscale.
+        Uses the template_region with TEMPLATE_SEARCH_PADDING for positional tolerance.
+        """
+        region = self.game_config.template_region
+        pad = TEMPLATE_SEARCH_PADDING
+        
+        # Add padding for positional tolerance (clamped to frame bounds)
+        y1 = max(0, region.y - pad)
+        y2 = min(frame.shape[0], region.y + region.height + pad)
+        x1 = max(0, region.x - pad)
+        x2 = min(frame.shape[1], region.x + region.width + pad)
+        
+        crop = frame[y1:y2, x1:x2]
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+        
+        # Apply same blur as templates for consistent matching
+        gray = cv2.GaussianBlur(gray, (3, 3), 0)
+        
+        return gray
+    
+    def _get_match_threshold(self, trainer_name: str) -> float:
+        """
+        Get the match threshold for a specific trainer.
+        Uses higher threshold for "champion" to avoid false positives.
+        """
+        if trainer_name.lower() == "champion":
+            return TEMPLATE_MATCH_THRESHOLD_CHAMPION
+        return TEMPLATE_MATCH_THRESHOLD
+    
+    def _template_match_any(self, cap, frame_num: int) -> tuple[Optional[str], float]:
+        """
+        Check if ANY trainer template matches at this frame.
+        
+        Returns (trainer_name, confidence) or (None, 0.0).
+        ~100-350x faster than OCR (~0.2ms per template vs ~70ms for Tesseract).
+        """
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        ret, frame = cap.read()
+        if not ret:
+            return None, 0.0
+        
+        # Fast pre-screen: check if there's text-like content in the region
+        region = self.game_config.template_region
+        text_crop = frame[
+            region.y : region.y + region.height,
+            region.x : region.x + region.width
+        ]
+        if not self._has_text_like_content(text_crop):
+            return None, 0.0
+        
+        # Get the padded search region
+        search_img = self._get_template_crop(frame)
+        
+        best_trainer = None
+        best_score = 0.0
+        
+        for trainer_name, template_list in self.templates.items():
+            threshold = self._get_match_threshold(trainer_name)
+            for template_key, template_img in template_list:
+                # Ensure template fits within search region
+                if (template_img.shape[0] > search_img.shape[0] or 
+                    template_img.shape[1] > search_img.shape[1]):
+                    continue
+                
+                result = cv2.matchTemplate(search_img, template_img, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                
+                # Special check for "champion": only match if it's at the start of the text region
+                # (avoids matching "Champion" in "Champion Cynthia" or "Champion Lance")
+                if trainer_name.lower() == "champion":
+                    # Check if match is near the start (within 10 pixels of left edge)
+                    # This ensures we're matching standalone "Champion", not "Champion [name]"
+                    if max_loc[0] > 10:  # Match is too far right, likely part of longer phrase
+                        continue
+                
+                if max_val > best_score and max_val >= threshold:
+                    best_score = max_val
+                    best_trainer = trainer_name
+        
+        return best_trainer, best_score
+    
+    def _template_match_specific(self, cap, frame_num: int, trainer_name: str) -> tuple[bool, float]:
+        """
+        Check if a SPECIFIC trainer's template matches at this frame.
+        Faster than _template_match_any because it only checks one trainer's templates.
+        
+        Returns (is_detected, confidence).
+        """
+        if trainer_name not in self.templates:
+            return False, 0.0
+        
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        ret, frame = cap.read()
+        if not ret:
+            return False, 0.0
+        
+        # Fast pre-screen
+        region = self.game_config.template_region
+        text_crop = frame[
+            region.y : region.y + region.height,
+            region.x : region.x + region.width
+        ]
+        if not self._has_text_like_content(text_crop):
+            return False, 0.0
+        
+        # Get padded search region
+        search_img = self._get_template_crop(frame)
+        
+        threshold = self._get_match_threshold(trainer_name)
+        for template_key, template_img in self.templates[trainer_name]:
+            if (template_img.shape[0] > search_img.shape[0] or 
+                template_img.shape[1] > search_img.shape[1]):
+                continue
+            
+            result = cv2.matchTemplate(search_img, template_img, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(result)
+            
+            # Special check for "champion": only match if it's at the start of the text region
+            if trainer_name.lower() == "champion":
+                if max_loc[0] > 10:  # Match is too far right, likely part of longer phrase
+                    continue
+            
+            if max_val >= threshold:
+                return True, max_val
+        
+        return False, 0.0
+    
+    def _is_trainer_visible(self, cap, frame_num: int, trainer_name: str) -> bool:
+        """
+        Check if a specific trainer is visible at this frame.
+        Abstraction layer that uses template matching or OCR depending on configuration.
+        """
+        if self.use_template_matching and trainer_name in self.templates:
+            detected, _ = self._template_match_specific(cap, frame_num, trainer_name)
+            return detected
+        else:
+            text = self._get_ocr_text_at_frame(cap, frame_num)
+            return self._text_contains_trainer_pattern(text, trainer_name)
+    
+    # ── OCR methods ────────────────────────────────────────────────────────
     
     def _get_ocr_text_at_frame(self, cap, frame_num: int) -> str:
         """
@@ -1157,9 +1588,7 @@ class VideoProcessor:
         
         while right - left > MIN_WINDOW:
             mid = (left + right) // 2
-            detected = self._text_contains_trainer_pattern(
-                self._get_ocr_text_at_frame(cap, mid), trainer_name
-            )
+            detected = self._is_trainer_visible(cap, mid, trainer_name)
             
             if find_first:
                 # Looking for first frame WITH text
@@ -1210,14 +1639,12 @@ class VideoProcessor:
             frame -= JUMP
             if frame < 0:
                 frame = 0
-            detected = self._text_contains_trainer_pattern(
-                self._get_ocr_text_at_frame(cap, frame), trainer_name
-            )
+            detected = self._is_trainer_visible(cap, frame, trainer_name)
             if detected:
                 last_with_text = frame  # Still in battle
             else:
                 # Text disappeared - transition is between 'frame' and 'last_with_text'
-                # Use binary search to narrow down the exact boundary (reduces OCR calls)
+                # Use binary search to narrow down the exact boundary (reduces detection calls)
                 boundary = self._binary_search_text_boundary(
                     cap, frame, last_with_text, trainer_name, find_first=True
                 )
@@ -1276,14 +1703,12 @@ class VideoProcessor:
             if frame >= self.total_frames:
                 frame = self.total_frames - 1
             
-            detected = self._text_contains_trainer_pattern(
-                self._get_ocr_text_at_frame(cap, frame), trainer_name
-            )
+            detected = self._is_trainer_visible(cap, frame, trainer_name)
             if detected:
                 last_with_text = frame
             else:
                 # Text disappeared - transition is between 'last_with_text' and 'frame'
-                # Use binary search to narrow down the exact boundary (reduces OCR calls)
+                # Use binary search to narrow down the exact boundary (reduces detection calls)
                 boundary = self._binary_search_text_boundary(
                     cap, last_with_text, frame, trainer_name, find_first=False
                 )
@@ -1307,12 +1732,138 @@ class VideoProcessor:
         
         return None
 
+    def _get_chapter_cut_points(self, battle_start_frame: int) -> tuple[Optional[int], Optional[int]]:
+        """
+        Get in/out cut frames from OBS chapter markers (Battle = in, next Overworld = out).
+        When we have markers we always resolve: use prior Battle and next Overworld;
+        only returns (None, None) when the file has no chapter track at all.
+        """
+        if not get_obs_chapters or not getattr(self, "_obs_chapters", None):
+            return None, None
+        chapters = self._obs_chapters
+        battle_time_sec = battle_start_frame / self.fps
+        # In: Battle that starts this fight. Prefer last Battle at or before detection;
+        #     if template matched a frame before the marker, use first Battle at or after.
+        in_time = None
+        first_battle_after = None  # first Battle at or after detection (for detection-before-marker case)
+        for time_sec, name in chapters:
+            if name == "Battle":
+                if time_sec <= battle_time_sec:
+                    in_time = time_sec
+                elif first_battle_after is None:
+                    first_battle_after = time_sec
+        if in_time is None and first_battle_after is not None:
+            in_time = first_battle_after  # Detection was (slightly) before this battle's marker
+        # Out: first Overworld after detection; if none (last battle), use video end
+        out_time = None
+        for time_sec, name in chapters:
+            if name == "Overworld" and time_sec > battle_time_sec:
+                out_time = time_sec
+                break
+        if out_time is None:
+            out_time = self.total_frames / self.fps  # End of video
+        in_frame = int(in_time * self.fps) if in_time is not None else None
+        out_frame = int(out_time * self.fps) if out_time is not None else None
+        return in_frame, out_frame
+
+    @staticmethod
+    def _normalize_chapter_name(name):
+        """Strip leading prefix characters (e.g. $, %) so 'IN - X' / 'OUT - X' can be recognized."""
+        s = (name or "").strip()
+        while s and s[0] in "$%#":
+            s = s[1:].strip()
+        return s
+
+    @staticmethod
+    def _chapters_use_in_out_format(chapters):
+        """True if any chapter name uses the 'IN - TRAINER' / 'OUT - TRAINER' format."""
+        for _t, name in chapters:
+            s = VideoProcessor._normalize_chapter_name(name)
+            if s.startswith("IN - ") or s.startswith("OUT - "):
+                return True
+        return False
+
+    def _build_battles_from_in_out_markers(self, chapters, marker_trainers):
+        """Build battle list from IN/OUT markers.
+
+        Out marker is whichever comes first: RESET, BLACKOUT, or OUT - <trainer>.
+        """
+        marker_set = set(marker_trainers)
+        events = []
+        for time_sec, name in chapters:
+            s = self._normalize_chapter_name(name)
+            if s.startswith("IN - "):
+                trainer = s[5:].strip()
+                if trainer in marker_set:
+                    events.append((time_sec, "IN", trainer))
+            elif s.startswith("OUT - "):
+                trainer = s[6:].strip()
+                if trainer in marker_set:
+                    events.append((time_sec, "OUT", trainer))
+            elif s in ("OUT", "RESET", "BLACKOUT"):
+                events.append((time_sec, "OUT", None))
+        events.sort(key=lambda x: (x[0], 0 if x[1] == "IN" else 1))
+        pending_in = {}
+        battles = []
+        for time_sec, kind, trainer in events:
+            if kind == "IN":
+                pending_in[trainer] = time_sec
+            else:
+                if trainer is not None and trainer in pending_in:
+                    in_sec = pending_in.pop(trainer)
+                    in_frame = int(in_sec * self.fps)
+                    out_frame = int(time_sec * self.fps)
+                    if out_frame > in_frame:
+                        battles.append(BattleSequence(
+                            trainer_name=trainer,
+                            battle_start_frame=in_frame,
+                            battle_end_frame=out_frame,
+                            cut_in_frame=in_frame,
+                            cut_out_frame=out_frame,
+                            cut_in_timestamp=in_sec,
+                            cut_out_timestamp=time_sec,
+                        ))
+                elif trainer is None and pending_in:
+                    most_recent = max(pending_in, key=pending_in.get)
+                    in_sec = pending_in.pop(most_recent)
+                    in_frame = int(in_sec * self.fps)
+                    out_frame = int(time_sec * self.fps)
+                    if out_frame > in_frame:
+                        battles.append(BattleSequence(
+                            trainer_name=most_recent,
+                            battle_start_frame=in_frame,
+                            battle_end_frame=out_frame,
+                            cut_in_frame=in_frame,
+                            cut_out_frame=out_frame,
+                            cut_in_timestamp=in_sec,
+                            cut_out_timestamp=time_sec,
+                        ))
+        return battles
+
     def _process_trainer_detection(self, trainer_name: str, first_frame: int, results_queue: Queue):
         """
         Worker function to process a single trainer detection.
-        Finds the cut-in and cut-out frames using fast coarse-to-fine search.
+        Uses OBS chapter markers (Battle/Overworld) for cut points when available;
+        otherwise finds cut-in and cut-out via black/white frame search.
         """
-        # Each worker gets its own video capture
+        # Try OBS chapter markers first (no video read needed)
+        if get_obs_chapters and getattr(self, "_obs_chapters", None):
+            in_frame, out_frame = self._get_chapter_cut_points(first_frame)
+            if in_frame is not None and out_frame is not None and out_frame > in_frame:
+                result = {
+                    "trainer": trainer_name,
+                    "first_frame": first_frame,
+                    "cut_in": in_frame,
+                    "cut_out": out_frame,
+                    "cut_in_type": "CHAPTER_BATTLE",
+                    "cut_out_type": "CHAPTER_OVERWORLD",
+                    "mean_in": 0.0,
+                    "mean_out": 0.0,
+                }
+                results_queue.put(result)
+                return
+
+        # Fallback: black/white frame search (opens video)
         cap = cv2.VideoCapture(str(self.video_path))
         
         try:
@@ -1410,15 +1961,47 @@ class VideoProcessor:
             print("No trainers specified to detect.")
             return detections, battles
         
-        if not OCR_AVAILABLE:
-            print("OCR not available, cannot detect trainers")
+        if not self.use_template_matching and not OCR_AVAILABLE:
+            print("Neither template matching nor OCR available, cannot detect trainers")
             return detections, battles
         
+        detection_method = "TEMPLATE" if self.use_template_matching else "OCR"
         print(f"\nScanning {self.total_frames} frames for trainers: {detect_trainers}")
+        print(f"Detection method: {detection_method}")
         print(f"Sample interval: {self.EARLY_GAME_INTERVAL} frames (early) / {self.TRAINER_SAMPLE_INTERVAL} frames (normal)")
         print(f"Transition search: {self.TRANSITION_JUMP} frame jumps with binary search refinement")
         print(f"Using {self.num_workers} worker threads for cut point detection")
         print("-" * 70, flush=True)
+        
+        # Load OBS chapter markers (Battle/Overworld) for fast cut points when available
+        self._obs_chapters = None
+        if OBS_CHAPTERS_AVAILABLE and get_obs_chapters:
+            self._obs_chapters = get_obs_chapters(Path(self.video_path))
+            if self._obs_chapters:
+                # New format: "IN - TRAINER" / "OUT - TRAINER" → build battles from markers only (no scan)
+                if self._chapters_use_in_out_format(self._obs_chapters) and getattr(self.game_config, "marker_trainers", None):
+                    marker_trainers = self.game_config.marker_trainers
+                    battles = self._build_battles_from_in_out_markers(self._obs_chapters, marker_trainers)
+                    battles = self._deduplicate_battles(battles)
+                    battles.sort(key=lambda b: b.cut_in_frame)
+                    for b in battles:
+                        detections.append(Detection(b.cut_in_frame, b.cut_in_timestamp, "CHAPTER_IN", b.trainer_name))
+                        detections.append(Detection(b.cut_out_frame, b.cut_out_timestamp, "CHAPTER_OUT", b.trainer_name))
+                    elapsed = time.time() - start_time
+                    print(f"OBS chapter markers loaded: {len(self._obs_chapters)} total")
+                    print(f"Using IN/OUT marker format - built {len(battles)} battles from markers (no scan)")
+                    print("-" * 70)
+                    print(f"Analysis complete in {elapsed:.1f}s")
+                    print(f"Found {len(battles)} battles")
+                    return detections, battles
+                # Old format: Battle/Overworld → use for cut points during template/OCR scan
+                battle_count = sum(1 for _, name in self._obs_chapters if name == "Battle")
+                overworld_count = sum(1 for _, name in self._obs_chapters if name == "Overworld")
+                print(f"OBS chapter markers loaded: {len(self._obs_chapters)} total ({battle_count} Battle, {overworld_count} Overworld) - using for cut points")
+            else:
+                print("No OBS chapter track in file - using black/white frame search for cut points")
+        else:
+            print("OBS chapter support not available - using black/white frame search for cut points")
         
         # Queue for detection results
         results_queue: Queue = Queue()
@@ -1432,51 +2015,83 @@ class VideoProcessor:
             frame_num = 0
             # Track detections PER TRAINER to avoid filtering different trainers as duplicates
             detections_per_trainer: dict[str, list[int]] = {t: [] for t in detect_trainers}
-            ocr_calls = 0  # Track OCR calls for performance monitoring
+            detection_calls = 0  # Track detection calls for performance monitoring
             frames_checked = 0
             
             while frame_num < self.total_frames:
-                # OPTIMIZATION: Run OCR ONCE per frame, then check all trainers
-                ocr_text = self._get_ocr_text_at_frame(cap, frame_num)
                 frames_checked += 1
                 
-                if ocr_text:  # Only count and check if OCR returned text
-                    ocr_calls += 1
+                # Detect trainer at this frame using template matching or OCR
+                detected_trainer = None
+                
+                if self.use_template_matching:
+                    # TEMPLATE MATCHING: ~0.2ms per template vs ~70ms for OCR
+                    matched_trainer, confidence = self._template_match_any(cap, frame_num)
+                    if matched_trainer:
+                        detection_calls += 1
+                        detected_trainer = matched_trainer
+                        if self.debug_ocr:
+                            print(f"    [TEMPLATE @{frame_num}] {matched_trainer} (confidence={confidence:.3f})", flush=True)
+                else:
+                    # OCR: Run once per frame, then check all trainers
+                    ocr_text = self._get_ocr_text_at_frame(cap, frame_num)
+                    if ocr_text:
+                        detection_calls += 1
+                        if self.debug_ocr:
+                            print(f"    [OCR @{frame_num}] '{ocr_text}'", flush=True)
+                        for trainer_name in detect_trainers:
+                            if self._text_contains_trainer_pattern(ocr_text, trainer_name):
+                                detected_trainer = trainer_name
+                                break
+                
+                if detected_trainer:
+                    # Check if we're too close to an existing detection OF THE SAME TRAINER
+                    current_interval = self.EARLY_GAME_INTERVAL if frame_num < self.EARLY_GAME_THRESHOLD else self.TRAINER_SAMPLE_INTERVAL
                     
-                    # Debug output
-                    if self.debug_ocr:
-                        print(f"    [OCR @{frame_num}] '{ocr_text}'", flush=True)
+                    # Special handling for trainers that appear multiple times in quick succession
+                    # Kimono Girls: 5 battles in a row, each ~10 seconds apart
+                    if detected_trainer.lower() == "kimono girl":
+                        proximity_multiplier = 1  # More lenient for Kimono Girls
+                    else:
+                        proximity_multiplier = 2  # Standard threshold
                     
-                    # Check all trainers against this single OCR result
-                    for trainer_name in detect_trainers:
-                        if self._text_contains_trainer_pattern(ocr_text, trainer_name):
-                            # Check if we're too close to an existing detection OF THE SAME TRAINER
-                            # Use current interval for proximity check, but be more lenient for rapid battles
-                            current_interval = self.EARLY_GAME_INTERVAL if frame_num < self.EARLY_GAME_THRESHOLD else self.TRAINER_SAMPLE_INTERVAL
-                            
-                            # Special handling for trainers that appear multiple times in quick succession
-                            # Kimono Girls: 5 battles in a row, each ~10 seconds apart
-                            # Use smaller proximity threshold (just 1x interval instead of 2x)
-                            if trainer_name.lower() == "kimono girl":
-                                proximity_multiplier = 1  # More lenient for Kimono Girls
+                    too_close = any(abs(frame_num - d) < current_interval * proximity_multiplier 
+                                   for d in detections_per_trainer.get(detected_trainer, []))
+                    
+                    if not too_close:
+                        print(f"  Found {detected_trainer} at frame {frame_num} ({frame_num/self.fps:.1f}s) - processing...", flush=True)
+                        if detected_trainer not in detections_per_trainer:
+                            detections_per_trainer[detected_trainer] = []
+                        detections_per_trainer[detected_trainer].append(frame_num)
+                        
+                        # When we have OBS chapters, resolve cut points in main thread (no worker needed)
+                        if get_obs_chapters and getattr(self, "_obs_chapters", None):
+                            in_frame, out_frame = self._get_chapter_cut_points(frame_num)
+                            if in_frame is not None and out_frame is not None and out_frame > in_frame:
+                                results_queue.put({
+                                    "trainer": detected_trainer,
+                                    "first_frame": frame_num,
+                                    "cut_in": in_frame,
+                                    "cut_out": out_frame,
+                                    "cut_in_type": "CHAPTER_BATTLE",
+                                    "cut_out_type": "CHAPTER_OVERWORLD",
+                                    "mean_in": 0.0,
+                                    "mean_out": 0.0,
+                                })
                             else:
-                                proximity_multiplier = 2  # Standard threshold
-                            
-                            too_close = any(abs(frame_num - d) < current_interval * proximity_multiplier 
-                                           for d in detections_per_trainer[trainer_name])
-                            
-                            if not too_close:
-                                print(f"  Found {trainer_name} at frame {frame_num} ({frame_num/self.fps:.1f}s) - processing...", flush=True)
-                                detections_per_trainer[trainer_name].append(frame_num)
-                                
-                                # Submit to worker thread
+                                # Chapter lookup failed for this detection (e.g. before first Battle marker)
                                 future = executor.submit(
                                     self._process_trainer_detection,
-                                    trainer_name, frame_num, results_queue
+                                    detected_trainer, frame_num, results_queue
                                 )
                                 pending_tasks.append(future)
-                                # Don't break - allow multiple trainers to be detected in the same frame
-                                # (e.g., if OCR text contains multiple trainer names, though unlikely)
+                        else:
+                            # No chapters: submit to worker for black/white search
+                            future = executor.submit(
+                                self._process_trainer_detection,
+                                detected_trainer, frame_num, results_queue
+                            )
+                            pending_tasks.append(future)
                 
                 # ADAPTIVE SAMPLING: More frequent checks early in video to catch short battles
                 if frame_num < self.EARLY_GAME_THRESHOLD:
@@ -1488,18 +2103,21 @@ class VideoProcessor:
                 if frames_checked % 50 == 0:
                     pct = (frame_num / self.total_frames) * 100
                     elapsed = time.time() - start_time
-                    print(f"  ... {pct:.0f}% scanned ({ocr_calls} OCR calls in {elapsed:.1f}s)", flush=True)
+                    print(f"  ... {pct:.0f}% scanned ({detection_calls} {detection_method} calls in {elapsed:.1f}s)", flush=True)
             
             cap.release()
-            print(f"\nScan complete: {ocr_calls} OCR calls total")
+            print(f"\nScan complete: {detection_calls} {detection_method} calls total")
             
-            # Wait for all tasks to complete
-            print(f"\nWaiting for {len(pending_tasks)} cut point searches to complete...", flush=True)
-            for future in as_completed(pending_tasks):
-                try:
-                    future.result()  # This will raise any exceptions
-                except Exception as e:
-                    print(f"  Warning: Worker error: {e}")
+            # Wait for any worker tasks (only needed when chapter lookup failed for some detections)
+            if pending_tasks:
+                print(f"\nWaiting for {len(pending_tasks)} cut point search(es) to complete...", flush=True)
+                for future in as_completed(pending_tasks):
+                    try:
+                        future.result()  # This will raise any exceptions
+                    except Exception as e:
+                        print(f"  Warning: Worker error: {e}")
+            else:
+                print("\nAll cut points resolved from chapter markers (no search needed).", flush=True)
         
         # Collect results
         while not results_queue.empty():
@@ -1738,7 +2356,7 @@ def export_automation_blocks_json(battles: list[BattleSequence], fps: float, out
 def process_single_video(video_path: Path, game_config: GameConfig, trainers: list[str],
                          downscale: float, workers: int, debug_ocr: bool,
                          transition_jump: int, early_interval: int, normal_interval: int,
-                         output_path: Path = None) -> int:
+                         output_path: Path = None, detection_mode: str = "auto") -> int:
     """Process a single video file. Returns 0 on success, 1 on error."""
     try:
         processor = VideoProcessor(
@@ -1749,7 +2367,8 @@ def process_single_video(video_path: Path, game_config: GameConfig, trainers: li
             debug_ocr=debug_ocr,
             transition_jump=transition_jump,
             early_interval=early_interval,
-            normal_interval=normal_interval
+            normal_interval=normal_interval,
+            detection_mode=detection_mode
         )
         
         detections, battles = processor.analyze(detect_trainers=trainers)
@@ -1818,6 +2437,11 @@ def main():
                        help="Sample interval for early game in frames (default: 480 = 2sec at 240fps)")
     parser.add_argument("--normal-interval", type=int, default=1440,
                        help="Sample interval for normal scanning in frames (default: 1440 = 6sec at 240fps)")
+    # Detection mode
+    parser.add_argument("--detection-mode", type=str, default="auto",
+                       choices=["auto", "template", "ocr"],
+                       help="Trainer detection method: auto (template if available, else OCR), "
+                            "template (template matching only), ocr (Tesseract OCR only)")
     
     args = parser.parse_args()
     
@@ -1862,6 +2486,7 @@ def main():
                 normal_interval=args.normal_interval,
                 # Each file gets its own output JSON (named after the video)
                 output_path=None,
+                detection_mode=args.detection_mode,
             )
             if result != 0:
                 errors += 1
@@ -1884,6 +2509,7 @@ def main():
             early_interval=args.early_interval,
             normal_interval=args.normal_interval,
             output_path=args.output,
+            detection_mode=args.detection_mode,
         )
 
 
