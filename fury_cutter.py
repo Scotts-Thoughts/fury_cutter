@@ -653,9 +653,9 @@ class VideoProcessor:
         print(f"  Worker threads: {self.num_workers}")
         if self.use_template_matching:
             total_templates = sum(len(v) for v in self.templates.values())
-            print(f"  Detection: TEMPLATE MATCHING ({total_templates} templates for {len(self.templates)} trainers)")
+            print(f"  Scan fallback: TEMPLATE MATCHING ({total_templates} templates for {len(self.templates)} trainers)")
         else:
-            print(f"  Detection: OCR (pytesseract, available={OCR_AVAILABLE})")
+            print(f"  Scan fallback: OCR (pytesseract, available={OCR_AVAILABLE})")
     
     def _analyze_frame_range(self, start_frame: int, end_frame: int, 
                              detect_trainers: list[str] = None) -> list[dict]:
@@ -1965,15 +1965,7 @@ class VideoProcessor:
             print("Neither template matching nor OCR available, cannot detect trainers")
             return detections, battles
         
-        detection_method = "TEMPLATE" if self.use_template_matching else "OCR"
-        print(f"\nScanning {self.total_frames} frames for trainers: {detect_trainers}")
-        print(f"Detection method: {detection_method}")
-        print(f"Sample interval: {self.EARLY_GAME_INTERVAL} frames (early) / {self.TRAINER_SAMPLE_INTERVAL} frames (normal)")
-        print(f"Transition search: {self.TRANSITION_JUMP} frame jumps with binary search refinement")
-        print(f"Using {self.num_workers} worker threads for cut point detection")
-        print("-" * 70, flush=True)
-        
-        # Load OBS chapter markers (Battle/Overworld) for fast cut points when available
+        # Load OBS chapter markers first — if the file has IN/OUT markers we skip the scan entirely
         self._obs_chapters = None
         if OBS_CHAPTERS_AVAILABLE and get_obs_chapters:
             self._obs_chapters = get_obs_chapters(Path(self.video_path))
@@ -1988,18 +1980,28 @@ class VideoProcessor:
                         detections.append(Detection(b.cut_in_frame, b.cut_in_timestamp, "CHAPTER_IN", b.trainer_name))
                         detections.append(Detection(b.cut_out_frame, b.cut_out_timestamp, "CHAPTER_OUT", b.trainer_name))
                     elapsed = time.time() - start_time
-                    print(f"OBS chapter markers loaded: {len(self._obs_chapters)} total")
+                    print(f"\nOBS chapter markers loaded: {len(self._obs_chapters)} total")
                     print(f"Using IN/OUT marker format - built {len(battles)} battles from markers (no scan)")
                     print("-" * 70)
                     print(f"Analysis complete in {elapsed:.1f}s")
                     print(f"Found {len(battles)} battles")
                     return detections, battles
-                # Old format: Battle/Overworld → use for cut points during template/OCR scan
-                battle_count = sum(1 for _, name in self._obs_chapters if name == "Battle")
-                overworld_count = sum(1 for _, name in self._obs_chapters if name == "Overworld")
-                print(f"OBS chapter markers loaded: {len(self._obs_chapters)} total ({battle_count} Battle, {overworld_count} Overworld) - using for cut points")
-            else:
-                print("No OBS chapter track in file - using black/white frame search for cut points")
+
+        detection_method = "TEMPLATE" if self.use_template_matching else "OCR"
+        print(f"\nScanning {self.total_frames} frames for trainers: {detect_trainers}")
+        print(f"Detection method: {detection_method}")
+        print(f"Sample interval: {self.EARLY_GAME_INTERVAL} frames (early) / {self.TRAINER_SAMPLE_INTERVAL} frames (normal)")
+        print(f"Transition search: {self.TRANSITION_JUMP} frame jumps with binary search refinement")
+        print(f"Using {self.num_workers} worker threads for cut point detection")
+        print("-" * 70, flush=True)
+
+        if self._obs_chapters:
+            # Old format: Battle/Overworld → use for cut points during template/OCR scan
+            battle_count = sum(1 for _, name in self._obs_chapters if name == "Battle")
+            overworld_count = sum(1 for _, name in self._obs_chapters if name == "Overworld")
+            print(f"OBS chapter markers loaded: {len(self._obs_chapters)} total ({battle_count} Battle, {overworld_count} Overworld) - using for cut points")
+        elif OBS_CHAPTERS_AVAILABLE and get_obs_chapters:
+            print("No OBS chapter track in file - using black/white frame search for cut points")
         else:
             print("OBS chapter support not available - using black/white frame search for cut points")
         
