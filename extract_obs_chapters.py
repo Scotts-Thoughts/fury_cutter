@@ -271,12 +271,21 @@ def get_obs_chapters(path: Path) -> Optional[list[tuple[float, str]]]:
             if end == -1:
                 end = len(raw)
             part = raw[:end]
-            if part and part[0] < 0x20 and 1 <= part[0] < len(part):
-                text = part[1 : 1 + part[0]].decode("utf-8", errors="replace")
-            else:
+            # Chapter samples are length-prefixed: 2-byte big-endian length + UTF-8 text.
+            text = None
+            if len(part) >= 2:
+                length = struct.unpack(">H", part[:2])[0]
+                if 1 <= length <= len(part) - 2:
+                    try:
+                        candidate = part[2 : 2 + length].decode("utf-8")
+                    except UnicodeDecodeError:
+                        candidate = None
+                    if candidate is not None and candidate.isprintable():
+                        text = candidate
+            if text is None:
                 text = part.decode("utf-8", errors="replace").strip("\x00")
-            if not text.isprintable() and len(text) >= 1 and ord(text[0]) < 0x20:
-                text = text[1:]
+                if not text.isprintable() and len(text) >= 1 and ord(text[0]) < 0x20:
+                    text = text[1:]
             chapters.append((time_sec, text))
         else:
             chapters.append((time_sec, "<unknown>"))
