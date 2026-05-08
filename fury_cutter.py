@@ -82,6 +82,8 @@ PREMIERE_LABELS = {
     "mars": "Enemy Leader", "jupiter": "Enemy Leader", "saturn": "Enemy Leader", "cyrus": "Enemy Leader",
     "maxie": "Enemy Leader", "archie": "Enemy Leader",
     "ghetsis": "Enemy Leader",
+    # Team Rocket Executives — Crystal markers EXECUTIVE M / EXECUTIVE F.
+    "executive m": "Enemy Leader", "executive f": "Enemy Leader",
     
     # Story trainers (Bianca, Cheren, N, Wally) -> "Cerulean" label (key 7)
     "bianca": "Cerulean", "cheren": "Cerulean", "n": "Enemy Boss", "wally": "Cerulean",
@@ -134,6 +136,13 @@ class GameConfig:
     template_region: Region = None
     # Optional: trainer names for IN/OUT chapter markers (format "IN - TRAINER" / "OUT - TRAINER"). When set and file has these markers, battles are built from markers only (no template/OCR scan).
     marker_trainers: Optional[list[str]] = None
+    # Optional per-game overrides for the flat PREMIERE_LABELS map. Same trainer
+    # plays a different role across generations (e.g. KOGA is a Fuchsia gym
+    # leader in RBY/Yellow but an Elite Four member in GSC/Crystal; BLUE is the
+    # RBY Champion but the GSC Viridian gym leader; LANCE is the GSC/HGSS
+    # Champion but an E4 member in RBY/Yellow). Keys are lower-case trainer
+    # names; values override the PREMIERE_LABELS lookup for that game only.
+    label_overrides: Optional[dict] = None
     
     def __post_init__(self):
         # Default regions for Nintendo DS
@@ -436,9 +445,17 @@ GAME_CONFIGS = {
             "BLAINE",
             "BLUE",
             "RED",
-        ]
+            "EXECUTIVE M",
+            "EXECUTIVE F",
+        ],
+        label_overrides={
+            "koga": "E4",     # Indigo Plateau Elite Four in GSC, not Fuchsia gym
+            "blue": "Rival",  # GSC Viridian gym leader, but tagged with the
+                              # rival color since the player's GSC rival fight
+                              # he is, narratively, the original RBY Rival
+        },
     ),
-    
+
     # Generation 1 - Yellow
     # Gen1 header shows "Rival #'s Team" or "[trainer]'s Team" in header bar
     # OCR region: x=1548, y=40, w=355, h=34 (same as Crystal)
@@ -471,7 +488,10 @@ GAME_CONFIGS = {
             "BRUNO",
             "AGATHA",
             "LANCE",
-        ]
+        ],
+        label_overrides={
+            "lance": "E4",  # 4th Indigo Plateau E4 in RBY/Yellow, not Champion
+        },
     ),
     
     # Generation 1 - Red
@@ -506,7 +526,10 @@ GAME_CONFIGS = {
             "BRUNO",
             "AGATHA",
             "LANCE",
-        ]
+        ],
+        label_overrides={
+            "lance": "E4",  # 4th Indigo Plateau E4 in RBY/Yellow, not Champion
+        },
     ),
 }
 
@@ -1810,10 +1833,11 @@ class VideoProcessor:
                 pending_in[trainer] = time_sec
             else:
                 if trainer is not None and trainer in pending_in:
-                    in_sec = pending_in.pop(trainer)
+                    in_sec = pending_in[trainer]
                     in_frame = int(in_sec * self.fps)
                     out_frame = int(time_sec * self.fps)
                     if out_frame > in_frame:
+                        pending_in.pop(trainer)
                         battles.append(BattleSequence(
                             trainer_name=trainer,
                             battle_start_frame=in_frame,
@@ -1823,12 +1847,16 @@ class VideoProcessor:
                             cut_in_timestamp=in_sec,
                             cut_out_timestamp=time_sec,
                         ))
+                    # else: stray OUT at/before the pending IN (e.g. a duplicate
+                    # marker recorded at the same timestamp). Discard the OUT
+                    # and leave the IN pending so the real OUT can still pair.
                 elif trainer is None and pending_in:
                     most_recent = max(pending_in, key=pending_in.get)
-                    in_sec = pending_in.pop(most_recent)
+                    in_sec = pending_in[most_recent]
                     in_frame = int(in_sec * self.fps)
                     out_frame = int(time_sec * self.fps)
                     if out_frame > in_frame:
+                        pending_in.pop(most_recent)
                         battles.append(BattleSequence(
                             trainer_name=most_recent,
                             battle_start_frame=in_frame,
@@ -2292,9 +2320,16 @@ def seconds_to_timecode(seconds: float, fps: float) -> str:
     return f"{hours:02d}:{mins:02d}:{secs:02d}:{frames:02d}"
 
 
-def get_premiere_label(trainer_name: str) -> str:
-    """Get the Premiere Pro label for a trainer. Returns 'Magenta' for Rival, defaults to 'Cerulean'."""
+def get_premiere_label(trainer_name: str, game_config: Optional[GameConfig] = None) -> str:
+    """Get the Premiere Pro label for a trainer. Returns 'Magenta' for Rival, defaults to 'Cerulean'.
+    When game_config is provided, its label_overrides take precedence over the
+    flat PREMIERE_LABELS map — used for trainers whose role differs across
+    generations (e.g. KOGA: gym in RBY, E4 in GSC)."""
     trainer_lower = trainer_name.lower()
+    if game_config is not None and game_config.label_overrides:
+        override = game_config.label_overrides.get(trainer_lower)
+        if override is not None:
+            return override
     return PREMIERE_LABELS.get(trainer_lower, "Cerulean")
 
 
