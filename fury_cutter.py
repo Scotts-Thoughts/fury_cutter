@@ -85,8 +85,10 @@ PREMIERE_LABELS = {
     # Team Rocket Executives — Crystal markers EXECUTIVE M / EXECUTIVE F.
     "executive m": "Enemy Leader", "executive f": "Enemy Leader",
     
-    # Story trainers (Bianca, Cheren, N, Wally) -> "Cerulean" label (key 7)
-    "bianca": "Cerulean", "cheren": "Cerulean", "n": "Enemy Boss", "wally": "Cerulean",
+    # Story trainers -> "Cerulean" label (key 7), with B/W overrides:
+    # Bianca/Cheren are the player's rivals in Black, and N gets the same
+    # "Enemy Leader" color as Crystal's Team Rocket Executives.
+    "bianca": "Rival", "cheren": "Rival", "n": "Enemy Leader", "wally": "Cerulean",
     
     # Special trainers
     "kimono girl": "Cerulean",  # Kimono Girls in HGSS
